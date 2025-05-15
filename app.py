@@ -1,140 +1,98 @@
 import streamlit as st
-import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
 import pytz
+import pandas as pd
 
-# API настройки
-API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
-SPORT = "soccer"
-REGIONS = "uk,us,eu,au"
-MARKETS = "h2h,totals,btts"  # Добавих нови пазари
-ODDS_FORMAT = "decimal"
-DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-local_tz = pytz.timezone("Europe/Sofia")
-
-# Инициализация на данни за история
-if 'history' not in st.session_state:
-    st.session_state.history = []
-
-# Функция за изчисляване на стойност на залога
-def calculate_bet_amount(bankroll, target_profit):
-    return round(target_profit / 2, -1)  # Кръгли на 10
-
-# Функция за добавяне на залог в историята
-def add_bet_to_history(match, bet_type, odds, bet_amount, status, profit):
-    st.session_state.history.append({
-        "Мач": f"{match['home_team']} vs {match['away_team']}",
-        "Пазар": bet_type,
-        "Коефициент": odds,
-        "Сума на залог": bet_amount,
-        "Статус": status,
-        "Печалба": profit
-    })
-
-# === ТАБ 1: Прогнози ===
+st.set_page_config(page_title="Стойностни залози", layout="wide")
 tabs = st.tabs(["Прогнози", "История", "Настройки"])
 
+local_tz = pytz.timezone("Europe/Sofia")
+today = datetime.now(local_tz).date()
+
+# Инициализиране на сесия за история
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# === ТАБ 1: Прогнози ===
 with tabs[0]:
-    st.title("Стойностни залози – Реални мачове от Европа (днес)")
-    st.caption("Данни от OddsAPI в реално време")
+    st.title("Стойностни залози – Фиктивни данни за тестване")
+    st.caption("Тези данни са генерирани временно за тестове")
 
-    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
-    params = {
-        "apiKey": API_KEY,
-        "regions": REGIONS,
-        "markets": MARKETS,
-        "oddsFormat": ODDS_FORMAT
-    }
+    # Задаване на фиктивни мачове
+    fake_matches = []
+    teams = [("Real Madrid", "Barcelona"), ("Man City", "Liverpool"),
+             ("Juventus", "Inter"), ("Bayern", "Dortmund"), ("PSG", "Lyon")]
 
-    response = requests.get(url, params=params)
+    for home, away in teams:
+        kickoff = datetime.now(local_tz) + timedelta(minutes=random.randint(30, 300))
+        odds = {
+            "home": round(random.uniform(1.8, 3.5), 2),
+            "draw": round(random.uniform(3.0, 4.5), 2),
+            "away": round(random.uniform(1.8, 3.5), 2),
+            "gg": round(random.uniform(1.6, 2.5), 2),
+            "over_2.5": round(random.uniform(1.7, 2.4), 2)
+        }
 
-    if response.status_code != 200:
-        st.error(f"Грешка при зареждане на данни: {response.status_code} - {response.text}")
-    else:
-        data = response.json()
-        value_bets = []
+        for market, price in odds.items():
+            fair_prob = 1 / price
+            value = price * fair_prob  # Проста логика
+            if value > 1.05:
+                fake_matches.append({
+                    "Мач": f"{home} vs {away}",
+                    "Пазар": market.upper(),
+                    "Коефициент": price,
+                    "Начален час": kickoff.strftime("%H:%M"),
+                    "Value %": round((value - 1) * 100, 2),
+                    "Заложи": False
+                })
 
-        for match in data:
-            try:
-                match_time = datetime.strptime(match['commence_time'], DATE_FORMAT)
-                match_time_local = match_time.replace(tzinfo=pytz.utc).astimezone(local_tz)
-                if match_time_local.date() != datetime.now(local_tz).date():
-                    continue
-            except:
-                continue
+    if fake_matches:
+        df = pd.DataFrame(fake_matches)
+        df = df.sort_values(by="Value %", ascending=False)
 
-            if 'bookmakers' not in match or len(match['bookmakers']) == 0:
-                continue
+        st.markdown("### Избери залози")
+        edited_df = st.data_editor(
+            df,
+            use_container_width=True,
+            column_config={
+                "Заложи": st.column_config.CheckboxColumn("Заложи"),
+                "Коефициент": st.column_config.NumberColumn(format="%.2f"),
+                "Value %": st.column_config.NumberColumn(format="%.2f")
+            },
+            key="editor"
+        )
 
-            best_odds = {}
-            for bookmaker in match['bookmakers']:
-                for market in bookmaker['markets']:
-                    if market['key'] in ['h2h', 'totals', 'btts']:  # Проверявам за допълнителни пазари
-                        for outcome in market['outcomes']:
-                            name = outcome['name']
-                            price = outcome['price']
-                            if name not in best_odds or price > best_odds[name]['price']:
-                                best_odds[name] = {
-                                    'price': price,
-                                    'bookmaker': bookmaker['title']
-                                }
+        # Обработка на избраните залози
+        for i, row in edited_df.iterrows():
+            if row["Заложи"]:
+                bet_amount = 10  # фиксирана сума
+                outcome = random.choice(["win", "lose"])
+                profit = (row["Коефициент"] * bet_amount - bet_amount) if outcome == "win" else -bet_amount
 
-            if len(best_odds) < 2:
-                continue
-
-            inv_probs = [1 / info['price'] for info in best_odds.values()]
-            fair_prob_sum = sum(inv_probs)
-
-            for name, info in best_odds.items():
-                fair_prob = (1 / info['price']) / fair_prob_sum
-                value = info['price'] * fair_prob
-                if value > 1.05:
-                    value_bets.append({
-                        "Мач": f"{match['home_team']} vs {match['away_team']}",
-                        "Пазар": name,
-                        "Коефициент": info['price'],
-                        "Букмейкър": info['bookmaker'],
-                        "Value %": round((value - 1) * 100, 2),
-                        "Начален час": match_time_local.strftime("%H:%M")
-                    })
-
-        if value_bets:
-            df = sorted(value_bets, key=lambda x: -x["Value %"])
-            # Въвеждаме целта и стойността на залога
-            target_profit = st.number_input("Цел за печалба", min_value=0, value=100, step=10)
-            bankroll = st.number_input("Начална банка", min_value=0, value=500, step=10)
-            bet_amount = calculate_bet_amount(bankroll, target_profit)
-            st.write(f"Залог за мач: {bet_amount} лв")
-            
-            # Създаване на таблица със стойностни залози и възможност за добавяне в историята
-            for idx, row in enumerate(df):
-                with st.expander(f"Залог: {row['Мач']}"):
-                    if st.button(f"Заложи на {row['Мач']} ({row['Пазар']})", key=idx):
-                        # При натискане добавяме в историята
-                        add_bet_to_history(row, row["Пазар"], row["Коефициент"], bet_amount, "В процес", 0)
-                        st.success(f"Залогът е добавен към историята.")
-
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Няма стойностни залози за днешните мачове в момента.")
+                st.session_state.history.append({
+                    "Мач": row["Мач"],
+                    "Пазар": row["Пазар"],
+                    "Коефициент": row["Коефициент"],
+                    "Стойност %": row["Value %"],
+                    "Сума": bet_amount,
+                    "Резултат": "Печалба" if outcome == "win" else "Загуба",
+                    "Печалба": round(profit, 2),
+                    "Час": row["Начален час"]
+                })
 
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залози")
-
-    if len(st.session_state.history) > 0:
-        history_df = pd.DataFrame(st.session_state.history)
-        
-        # Оцветяване на редовете в зависимост от статуса
-        def highlight_status(val):
-            color = 'green' if val == "Спечелен" else ('red' if val == "Загубен" else 'yellow')
-            return f'background-color: {color}'
-        
-        st.dataframe(history_df.style.applymap(highlight_status, subset=["Статус"]), use_container_width=True)
+    if st.session_state.history:
+        df_hist = pd.DataFrame(st.session_state.history)
+        total_profit = df_hist["Печалба"].sum()
+        st.metric("Обща печалба", f"{total_profit:.2f} лв")
+        st.dataframe(df_hist, use_container_width=True)
     else:
-        st.write("Няма записани залози.")
-    
+        st.info("Все още няма направени залози.")
+
 # === ТАБ 3: Настройки ===
 with tabs[2]:
     st.header("Настройки")
-    st.write("Предстоят настройки за избор на лиги, маркети, лимити и др.")
+    st.write("Тук ще се появят настройки за избор на лиги, цели и др. – в разработка.")
