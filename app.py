@@ -1,10 +1,10 @@
 import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime
 import pytz
-import pandas as pd
 
-# --- API настройки ---
+# Настройки за API
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
 SPORT = "soccer"
 REGIONS = "uk,us,eu,au"
@@ -13,29 +13,14 @@ ODDS_FORMAT = "decimal"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 local_tz = pytz.timezone("Europe/Sofia")
 
-# --- Настройки ---
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 tabs = st.tabs(["Прогнози", "История", "Настройки"])
 
-# --- Сесия за история ---
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-if "bank" not in st.session_state:
-    st.session_state.bank = 500.0  # Начална банка по подразбиране
-
-if "target_profit" not in st.session_state:
-    st.session_state.target_profit = 150.0  # Цел: 30% печалба
-
-if "period_days" not in st.session_state:
-    st.session_state.period_days = 5
-
-# --- ТАБ 1: Прогнози ---
+# === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Реални мачове от Европа (днес)")
     st.caption("Данни от OddsAPI в реално време")
 
-    # Зареждане на коефициенти
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
     params = {
         "apiKey": API_KEY,
@@ -47,7 +32,7 @@ with tabs[0]:
     response = requests.get(url, params=params)
 
     if response.status_code != 200:
-        st.error(f"Грешка при зареждане: {response.status_code} - {response.text}")
+        st.error(f"Грешка при зареждане на данни: {response.status_code} - {response.text}")
     else:
         data = response.json()
         value_bets = []
@@ -91,61 +76,23 @@ with tabs[0]:
                         "Мач": f"{match['home_team']} vs {match['away_team']}",
                         "Пазар": name,
                         "Коефициент": info['price'],
-                        "Value %": round((value - 1) * 100, 2),
                         "Букмейкър": info['bookmaker'],
+                        "Value %": round((value - 1) * 100, 2),
                         "Начален час": match_time_local.strftime("%H:%M")
                     })
 
         if value_bets:
-            df = sorted(value_bets, key=lambda x: -x["Value %"])
-            selected = st.selectbox("Избери залог", options=[f"{x['Мач']} – {x['Пазар']} ({x['Коефициент']})" for x in df])
-            selected_row = df[[f"{x['Мач']} – {x['Пазар']} ({x['Коефициент']})" for x in df].index(selected)]
-
-            st.markdown("**Детайли за залог:**")
-            st.write(df[selected_row])
-
-            # Изчисление на залог според целта
-            profit_per_day = st.session_state.target_profit / st.session_state.period_days
-            odds = df[selected_row]["Коефициент"]
-            stake = round(profit_per_day / (odds - 1), 2)
-
-            st.success(f"Предложен залог: {stake} лв. за печалба от {round(profit_per_day, 2)} лв.")
-
-            if st.button("Заложи"):
-                st.session_state.history.append({
-                    "Дата": datetime.now(local_tz).strftime("%d.%m.%Y %H:%M"),
-                    "Мач": df[selected_row]["Мач"],
-                    "Пазар": df[selected_row]["Пазар"],
-                    "Коефициент": odds,
-                    "Залог": stake,
-                    "Очаквана печалба": round(stake * (odds - 1), 2)
-                })
-                st.success("Залогът е добавен в историята.")
+            df = pd.DataFrame(value_bets).sort_values(by="Value %", ascending=False)
+            selected = st.dataframe(df, use_container_width=True)
         else:
-            st.info("Няма стойностни залози за днес.")
+            st.info("Няма стойностни залози за днешните мачове в момента.")
 
-# --- ТАБ 2: История ---
+# === ТАБ 2: История ===
 with tabs[1]:
-    st.header("История на залозите")
-    if st.session_state.history:
-        hist_df = pd.DataFrame(st.session_state.history)
-        st.dataframe(hist_df, use_container_width=True)
-        total_bets = len(hist_df)
-        total_staked = sum([x["Залог"] for x in st.session_state.history])
-        expected_profit = sum([x["Очаквана печалба"] for x in st.session_state.history])
-        roi = (expected_profit / total_staked) * 100 if total_staked > 0 else 0
-        st.markdown(f"""
-        **Общо залози:** {total_bets}  
-        **Общо заложено:** {total_staked:.2f} лв.  
-        **Очаквана печалба:** {expected_profit:.2f} лв.  
-        **Очакван ROI:** {roi:.2f} %
-        """)
-    else:
-        st.info("Все още няма запазени залози.")
+    st.header("История на залози")
+    st.write("Тук ще се показват и записват направени залози (предстои разработка).")
 
-# --- ТАБ 3: Настройки ---
+# === ТАБ 3: Настройки ===
 with tabs[2]:
     st.header("Настройки")
-    st.session_state.bank = st.number_input("Начална банка (лв)", value=st.session_state.bank)
-    st.session_state.target_profit = st.number_input("Целева печалба (лв)", value=st.session_state.target_profit)
-    st.session_state.period_days = st.slider("Период за постигане на целта (дни)", 1, 30, st.session_state.period_days)
+    st.write("Предстоят настройки за избор на лиги, маркети, лимити и др.")
