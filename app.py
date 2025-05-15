@@ -12,12 +12,13 @@ ODDS_FORMAT = "decimal"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 local_tz = pytz.timezone("Europe/Sofia")
 
-st.set_page_config(page_title="Стойностни залози - Реални мачове", layout="wide")
-tabs = st.tabs(["Прогнози", "Настройки"])
+st.set_page_config(page_title="Стойностни залози", layout="wide")
+tabs = st.tabs(["Прогнози", "История", "Настройки"])
 
+# === ТАБ 1: Прогнози ===
 with tabs[0]:
-    st.title("Стойностни залози - Реални мачове (днес)")
-    st.caption("Извличане на стойностни залози от OddsAPI в реално време")
+    st.title("Стойностни залози – Реални мачове от Европа (днес)")
+    st.caption("Данни от OddsAPI в реално време")
 
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
     params = {
@@ -85,7 +86,12 @@ with tabs[0]:
         else:
             st.info("Няма стойностни залози за днешните мачове в момента.")
 
+# === ТАБ 2: История ===
 with tabs[1]:
+    st.header("История на залози")
+    st.write("Тук ще се показват и записват направени залози (предстои разработка).")
+
+# === ТАБ 3: Настройки ===
+with tabs[2]:
     st.header("Настройки")
-    st.write("Тук ще добавим възможности за избор на първенства, пазари, лимити и др.")
-    st.text("Настройки предстоят...")
+    st.write("Предстоят настройки за избор на лиги, маркети, лимити и др.")
