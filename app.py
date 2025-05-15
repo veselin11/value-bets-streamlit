@@ -1,24 +1,15 @@
 import streamlit as st
-import requests
+import pandas as pd
 from datetime import datetime
 import pytz
 import math
-import pandas as pd
 
-# Настройки
-API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"  # Заменете с валиден ключ, ако имате
-SPORT = "soccer"
-REGIONS = "eu"
-MARKETS = "h2h,totals,btts"  # Добавени пазари: Над/Под и ГГ
-ODDS_FORMAT = "decimal"
-DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+# Конфигурация
 local_tz = pytz.timezone("Europe/Sofia")
-
-# Интерфейс
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 tabs = st.tabs(["Прогнози", "История", "Настройки"])
 
-# ============ Настройки ============
+# ===== Настройки =====
 with tabs[2]:
     st.header("Настройки")
     col1, col2, col3 = st.columns(3)
@@ -32,118 +23,85 @@ with tabs[2]:
     daily_profit_goal = target_profit / days
     st.info(f"Дневна цел: {round(daily_profit_goal, 2)} лв")
 
-# ============ Прогнози ============
+# ===== Прогнози (демо) =====
 with tabs[0]:
-    st.title("Стойностни залози – Днес")
-    st.caption("Данни от OddsAPI (добавени пазари: Победа, Над/Под, Гол/Гол)")
+    st.title("Стойностни залози – Демонстрация")
+    st.caption("Данни: примерни стойности (без API)")
 
-    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
-    params = {
-        "apiKey": API_KEY,
-        "regions": REGIONS,
-        "markets": MARKETS,
-        "oddsFormat": ODDS_FORMAT
-    }
+    demo_data = [
+        {
+            "Мач": "Барселона vs Реал Мадрид",
+            "Пазар": "H2H: Барселона",
+            "Коефициент": 2.50,
+            "Value %": 12.5,
+            "Букмейкър": "Bet365",
+            "Час": "21:00",
+            "Мач ID": "1"
+        },
+        {
+            "Мач": "Ливърпул vs Манчестър Сити",
+            "Пазар": "BTTS: Yes",
+            "Коефициент": 1.90,
+            "Value %": 7.8,
+            "Букмейкър": "Betfair",
+            "Час": "18:30",
+            "Мач ID": "2"
+        },
+        {
+            "Мач": "Ювентус vs Интер",
+            "Пазар": "Over/Under 2.5: Over",
+            "Коефициент": 2.10,
+            "Value %": 9.6,
+            "Букмейкър": "Pinnacle",
+            "Час": "20:00",
+            "Мач ID": "3"
+        }
+    ]
 
-    response = requests.get(url, params=params)
+    df = pd.DataFrame(demo_data)
+    df["Избери"] = False
+    selected_rows = []
 
-    if response.status_code != 200:
-        st.error(f"Грешка при зареждане на данни: {response.status_code} - {response.text}")
+    st.markdown("### Примерни стойностни залози")
+    for i, row in df.iterrows():
+        with st.expander(f"{row['Мач']} — {row['Пазар']}"):
+            col1, col2, col3 = st.columns([4, 2, 2])
+            with col1:
+                st.markdown(f"**Коефициент:** {row['Коефициент']}")
+                st.markdown(f"**Value %:** `{row['Value %']}`")
+                st.markdown(f"**Букмейкър:** {row['Букмейкър']}")
+                st.markdown(f"**Час:** {row['Час']}")
+            with col2:
+                selected = st.checkbox("Залагай", key=row["Мач ID"])
+                if selected:
+                    selected_rows.append(row)
+            with col3:
+                stake = st.number_input(
+                    label="Сума на залог (лв)",
+                    key=f"stake_{row['Мач ID']}",
+                    min_value=0,
+                    value=int(round((daily_profit_goal / (row["Коефициент"] - 1)) / 10.0) * 10)
+                )
+
+    if selected_rows:
+        st.subheader("Избрани залози:")
+        summary = []
+        total_stake = 0
+        for row in selected_rows:
+            stake = st.session_state.get(f"stake_{row['Мач ID']}", 0)
+            total_stake += stake
+            summary.append({
+                "Мач": row["Мач"],
+                "Пазар": row["Пазар"],
+                "Коефициент": row["Коефициент"],
+                "Value %": row["Value %"],
+                "Сума на залог": stake
+            })
+        st.dataframe(pd.DataFrame(summary))
+        st.success(f"Обща сума за залагане: {total_stake} лв")
     else:
-        data = response.json()
-        value_bets = []
+        st.info("Не са избрани залози.")
 
-        for match in data:
-            try:
-                match_time = datetime.strptime(match['commence_time'], DATE_FORMAT)
-                match_time_local = match_time.replace(tzinfo=pytz.utc).astimezone(local_tz)
-                if match_time_local.date() != datetime.now(local_tz).date():
-                    continue
-            except:
-                continue
-
-            if 'bookmakers' not in match or len(match['bookmakers']) == 0:
-                continue
-
-            best_odds = {}
-            for bookmaker in match['bookmakers']:
-                for market in bookmaker['markets']:
-                    market_name = market['key']
-                    for outcome in market['outcomes']:
-                        name = f"{market_name.upper()}: {outcome['name']}"
-                        price = outcome['price']
-                        if name not in best_odds or price > best_odds[name]['price']:
-                            best_odds[name] = {
-                                'price': price,
-                                'bookmaker': bookmaker['title']
-                            }
-
-            if len(best_odds) < 2:
-                continue
-
-            inv_probs = [1 / info['price'] for info in best_odds.values()]
-            fair_prob_sum = sum(inv_probs)
-
-            for name, info in best_odds.items():
-                fair_prob = (1 / info['price']) / fair_prob_sum
-                value = info['price'] * fair_prob
-                if value > 1.05:
-                    value_percent = round((value - 1) * 100, 2)
-                    value_bets.append({
-                        "Мач": f"{match['home_team']} vs {match['away_team']}",
-                        "Пазар": name,
-                        "Коефициент": info['price'],
-                        "Value %": value_percent,
-                        "Букмейкър": info['bookmaker'],
-                        "Час": match_time_local.strftime("%H:%M"),
-                        "Мач ID": f"{match['id']}_{name}"
-                    })
-
-        if value_bets:
-            df = pd.DataFrame(value_bets).sort_values("Value %", ascending=False)
-            df["Избери"] = False
-            selected_rows = []
-
-            st.markdown("### Стойностни залози")
-            for i, row in df.iterrows():
-                with st.expander(f"{row['Мач']} — {row['Пазар']}"):
-                    col1, col2, col3 = st.columns([4, 2, 2])
-                    with col1:
-                        st.markdown(f"**Коефициент:** {row['Коефициент']}")
-                        st.markdown(f"**Value %:** `{row['Value %']}`")
-                        st.markdown(f"**Букмейкър:** {row['Букмейкър']}")
-                        st.markdown(f"**Час:** {row['Час']}")
-                    with col2:
-                        selected = st.checkbox("Залагай", key=row["Мач ID"])
-                        if selected:
-                            selected_rows.append(row)
-                    with col3:
-                        stake = st.number_input(
-                            label="Сума на залог (лв)",
-                            key=f"stake_{row['Мач ID']}",
-                            min_value=0,
-                            value=int(round((daily_profit_goal / (row["Коефициент"] - 1)) / 10.0) * 10)
-                        )
-
-            if selected_rows:
-                st.subheader("Избрани залози:")
-                summary = []
-                total_stake = 0
-                for row in selected_rows:
-                    stake = st.session_state.get(f"stake_{row['Мач ID']}", 0)
-                    total_stake += stake
-                    summary.append({
-                        "Мач": row["Мач"],
-                        "Пазар": row["Пазар"],
-                        "Коефициент": row["Коефициент"],
-                        "Value %": row["Value %"],
-                        "Сума на залог": stake
-                    })
-                st.dataframe(pd.DataFrame(summary))
-                st.success(f"Обща сума за залагане: {total_stake} лв")
-        else:
-            st.info("Няма стойностни залози за днес в момента.")
-
-# ============ История ============
+# ===== История (празна) =====
 with tabs[1]:
     st.header("История на залози (в разработка)")
