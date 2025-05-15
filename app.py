@@ -1,44 +1,41 @@
-import streamlit as st import requests from datetime import datetime import pytz import math
+import streamlit as st
+import requests
+from datetime import datetime
+import pytz
 
-Настройки
+# === Настройки и API ===
+API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
+SPORT = "soccer"
+REGIONS = "uk,us,eu,au"
+MARKETS = "h2h"
+ODDS_FORMAT = "decimal"
+DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+local_tz = pytz.timezone("Europe/Sofia")
 
-API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8" SPORT = "soccer" REGIONS = "eu" ODDS_FORMAT = "decimal" DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ" local_tz = pytz.timezone("Europe/Sofia")
+# === Streamlit Setup ===
+st.set_page_config(page_title="Стойностни залози", layout="wide")
+st.title("Стойностни залози – Реални мачове от Европа (днес)")
 
-Настройки за цел и банка
+# === Session State ===
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-TARGET_PROFIT = st.sidebar.number_input("Целева печалба (лв)", value=150.0) DAYS = st.sidebar.number_input("Брой дни", value=5) START_BANKROLL = st.sidebar.number_input("Начална банка (лв)", value=500.0)
-
-daily_target = TARGET_PROFIT / DAYS
-
-def calculate_bet_amount(odds): if odds <= 1.01: return 0 raw_amount = daily_target / (odds - 1) return int(math.ceil(raw_amount / 10.0) * 10)  # Кръгло на 10
-
-st.set_page_config(page_title="Стойностни залози", layout="wide") tabs = st.tabs(["Прогнози", "История", "Настройки"])
-
-=== ТАБ 1: Прогнози ===
-
-with tabs[0]: st.title("Стойностни залози – Реални мачове от Европа (днес)") st.caption("Данни от OddsAPI в реално време")
-
+# === Заявка към API ===
 url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
-desired_markets = ["h2h", "totals", "spreads"]
-supported_markets = []
-all_value_bets = []
+params = {
+    "apiKey": API_KEY,
+    "regions": REGIONS,
+    "markets": MARKETS,
+    "oddsFormat": ODDS_FORMAT
+}
 
-for market in desired_markets:
-    params = {
-        "apiKey": API_KEY,
-        "regions": REGIONS,
-        "markets": market,
-        "oddsFormat": ODDS_FORMAT
-    }
+response = requests.get(url, params=params)
 
-    response = requests.get(url, params=params)
-
-    if response.status_code != 200:
-        st.warning(f"Пазарът '{market}' не е наличен или не се поддържа. Пропуснат.")
-        continue
-
-    supported_markets.append(market)
+if response.status_code != 200:
+    st.error(f"Грешка при зареждане на данни: {response.status_code} - {response.text}")
+else:
     data = response.json()
+    value_bets = []
 
     for match in data:
         try:
@@ -54,46 +51,39 @@ for market in desired_markets:
 
         best_odds = {}
         for bookmaker in match['bookmakers']:
-            for mkt in bookmaker['markets']:
-                for outcome in mkt['outcomes']:
-                    key = f"{mkt['key']}:{outcome['name']}"
-                    if key not in best_odds or outcome['price'] > best_odds[key]['price']:
-                        best_odds[key] = {
-                            'price': outcome['price'],
-                            'bookmaker': bookmaker['title'],
-                            'market': mkt['key'],
-                            'name': outcome['name']
-                        }
+            for market in bookmaker['markets']:
+                if market['key'] == 'h2h':
+                    for outcome in market['outcomes']:
+                        name = outcome['name']
+                        price = outcome['price']
+                        if name not in best_odds or price > best_odds[name]['price']:
+                            best_odds[name] = {
+                                'price': price,
+                                'bookmaker': bookmaker['title']
+                            }
+
+        if len(best_odds) < 2:
+            continue
 
         inv_probs = [1 / info['price'] for info in best_odds.values()]
         fair_prob_sum = sum(inv_probs)
 
-        for key, info in best_odds.items():
+        for name, info in best_odds.items():
             fair_prob = (1 / info['price']) / fair_prob_sum
             value = info['price'] * fair_prob
             if value > 1.05:
-                bet_amount = calculate_bet_amount(info['price'])
-                all_value_bets.append({
+                value_bets.append({
                     "Мач": f"{match['home_team']} vs {match['away_team']}",
-                    "Пазар": f"{info['market']} – {info['name']}",
+                    "Пазар": name,
                     "Коефициент": info['price'],
-                    "Залог (лв)": bet_amount,
-                    "Value %": round((value - 1) * 100, 2),
                     "Букмейкър": info['bookmaker'],
-                    "Час": match_time_local.strftime("%H:%M")
+                    "Value %": round((value - 1) * 100, 2),
+                    "Начален час": match_time_local.strftime("%H:%M")
                 })
 
-if all_value_bets:
-    df = sorted(all_value_bets, key=lambda x: -x["Value %"])
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("Няма стойностни залози към момента.")
-
-=== ТАБ 2: История ===
-
-with tabs[1]: st.header("История на залози") st.write("Тук ще се показват и записват направени залози (предстои разработка).")
-
-=== ТАБ 3: Настройки ===
-
-with tabs[2]: st.header("Настройки") st.write("Настройки за цел, банка и поддържани пазари.")
-
+    if value_bets:
+        df = sorted(value_bets, key=lambda x: -x["Value %"])
+        st.table(df)
+    else:
+        st.info("Няма стойностни залози за днешните мачове в момента.")
+        
