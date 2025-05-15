@@ -1,10 +1,9 @@
 import streamlit as st
 import requests
-import pandas as pd
 from datetime import datetime
 import pytz
 
-# Настройки за API
+# API настройки
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
 SPORT = "soccer"
 REGIONS = "uk,us,eu,au"
@@ -20,6 +19,12 @@ tabs = st.tabs(["Прогнози", "История", "Настройки"])
 with tabs[0]:
     st.title("Стойностни залози – Реални мачове от Европа (днес)")
     st.caption("Данни от OddsAPI в реално време")
+
+    # Достъп до стойности от сесията
+    initial_bank = st.session_state.get("initial_bank", 500.0)
+    target_profit = st.session_state.get("target_profit", 150.0)
+    target_days = st.session_state.get("target_days", 5)
+    daily_goal = target_profit / target_days
 
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
     params = {
@@ -72,18 +77,30 @@ with tabs[0]:
                 fair_prob = (1 / info['price']) / fair_prob_sum
                 value = info['price'] * fair_prob
                 if value > 1.05:
+                    odds = info['price']
+                    value_pct = (value - 1)
+                    expected_edge = odds * value_pct - 1
+
+                    if expected_edge > 0:
+                        stake = daily_goal / expected_edge
+                        max_stake = 0.05 * initial_bank  # max 5% от банката
+                        stake_final = round(min(stake, max_stake), 2)
+                    else:
+                        stake_final = "-"
+
                     value_bets.append({
                         "Мач": f"{match['home_team']} vs {match['away_team']}",
                         "Пазар": name,
-                        "Коефициент": info['price'],
+                        "Коефициент": odds,
                         "Букмейкър": info['bookmaker'],
-                        "Value %": round((value - 1) * 100, 2),
-                        "Начален час": match_time_local.strftime("%H:%M")
+                        "Value %": round(value_pct * 100, 2),
+                        "Начален час": match_time_local.strftime("%H:%M"),
+                        "Залог (лв)": stake_final
                     })
 
         if value_bets:
-            df = pd.DataFrame(value_bets).sort_values(by="Value %", ascending=False)
-            selected = st.dataframe(df, use_container_width=True)
+            sorted_bets = sorted(value_bets, key=lambda x: -x["Value %"])
+            st.dataframe(sorted_bets, use_container_width=True)
         else:
             st.info("Няма стойностни залози за днешните мачове в момента.")
 
@@ -95,4 +112,11 @@ with tabs[1]:
 # === ТАБ 3: Настройки ===
 with tabs[2]:
     st.header("Настройки")
-    st.write("Предстоят настройки за избор на лиги, маркети, лимити и др.")
+    st.subheader("Целева печалба и управление на банката")
+
+    initial_bank = st.number_input("Начална банка (лв)", min_value=10.0, value=500.0, step=10.0, key="initial_bank")
+    target_profit = st.number_input("Целева печалба за периода (лв)", min_value=10.0, value=150.0, step=10.0, key="target_profit")
+    target_days = st.number_input("Продължителност (дни)", min_value=1, value=5, step=1, key="target_days")
+
+    daily_profit_goal = target_profit / target_days
+    st.info(f"Необходима дневна печалба: {daily_profit_goal:.2f} лв")
