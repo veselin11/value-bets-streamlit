@@ -3,57 +3,89 @@ import requests
 from datetime import datetime
 import pytz
 
-st.set_page_config(page_title="Стойностни залози", layout="wide")
-
+# API настройки
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
-REGIONS = "eu"
+SPORT = "soccer"
+REGIONS = "uk,us,eu,au"
 MARKETS = "h2h"
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+ODDS_FORMAT = "decimal"
+DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+local_tz = pytz.timezone("Europe/Sofia")
 
+st.set_page_config(page_title="Стойностни залози - Реални мачове", layout="wide")
 tabs = st.tabs(["Прогнози", "Настройки"])
 
 with tabs[0]:
-    st.title("Стойностни залози – Реални мачове от Европа (днес)")
+    st.title("Стойностни залози - Реални мачове (днес)")
+    st.caption("Извличане на стойностни залози от OddsAPI в реално време")
 
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
     params = {
         "apiKey": API_KEY,
         "regions": REGIONS,
         "markets": MARKETS,
-        "oddsFormat": "decimal"
+        "oddsFormat": ODDS_FORMAT
     }
 
-    today = datetime.utcnow().date()
+    response = requests.get(url, params=params)
 
-    try:
-        response = requests.get(ODDS_API_URL, params=params)
+    if response.status_code != 200:
+        st.error(f"Грешка при зареждане на данни: {response.status_code} - {response.text}")
+    else:
         data = response.json()
+        value_bets = []
 
-        shown = 0
         for match in data:
-            match_time_utc = datetime.fromisoformat(match["commence_time"].replace("Z", "+00:00"))
-            match_date = match_time_utc.date()
+            try:
+                match_time = datetime.strptime(match['commence_time'], DATE_FORMAT)
+                match_time_local = match_time.replace(tzinfo=pytz.utc).astimezone(local_tz)
+                if match_time_local.date() != datetime.now(local_tz).date():
+                    continue
+            except:
+                continue
 
-            if match_date == today:
-                home = match["home_team"]
-                away = match["away_team"]
-                bookmakers = match.get("bookmakers", [])
+            if 'bookmakers' not in match or len(match['bookmakers']) == 0:
+                continue
 
-                st.subheader(f"{home} vs {away}")
-                st.write(f"Час: {match_time_utc.strftime('%H:%M')} UTC")
+            best_odds = {}
+            for bookmaker in match['bookmakers']:
+                for market in bookmaker['markets']:
+                    if market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            name = outcome['name']
+                            price = outcome['price']
+                            if name not in best_odds or price > best_odds[name]['price']:
+                                best_odds[name] = {
+                                    'price': price,
+                                    'bookmaker': bookmaker['title']
+                                }
 
-                if bookmakers:
-                    for bm in bookmakers[:1]:
-                        st.markdown(f"**Букмейкър:** {bm['title']}")
-                        for outcome in bm["markets"][0]["outcomes"]:
-                            st.write(f"{outcome['name']}: коефициент {outcome['price']}")
-                st.markdown("---")
-                shown += 1
+            if len(best_odds) < 2:
+                continue
 
-        if shown == 0:
-            st.warning("Няма мачове за днес от избрания регион.")
-    except Exception as e:
-        st.error(f"Грешка при зареждане на данни: {e}")
+            inv_probs = [1 / info['price'] for info in best_odds.values()]
+            fair_prob_sum = sum(inv_probs)
+
+            for name, info in best_odds.items():
+                fair_prob = (1 / info['price']) / fair_prob_sum
+                value = info['price'] * fair_prob
+                if value > 1.05:
+                    value_bets.append({
+                        "Мач": f"{match['home_team']} vs {match['away_team']}",
+                        "Пазар": name,
+                        "Коефициент": info['price'],
+                        "Букмейкър": info['bookmaker'],
+                        "Value %": round((value - 1) * 100, 2),
+                        "Начален час": match_time_local.strftime("%H:%M")
+                    })
+
+        if value_bets:
+            df = sorted(value_bets, key=lambda x: -x["Value %"])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("Няма стойностни залози за днешните мачове в момента.")
 
 with tabs[1]:
-    st.title("Настройки")
-    st.write("Тук ще добавим възможност за избор на първенства, банки и други.")
+    st.header("Настройки")
+    st.write("Тук ще добавим възможности за избор на първенства, пазари, лимити и др.")
+    st.text("Настройки предстоят...")
