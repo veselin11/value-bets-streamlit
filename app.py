@@ -1,4 +1,7 @@
-import streamlit as st import pandas as pd import random from datetime import datetime
+import streamlit as st
+import pandas as pd
+import random
+from datetime import datetime
 
 st.set_page_config(page_title="Стойностни залози - Премачове", layout="wide")
 
