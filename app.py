@@ -3,53 +3,73 @@ import pandas as pd
 import random
 from datetime import datetime
 
-st.set_page_config(page_title="Стойностни залози - Премачове", layout="wide")
+# --- Фиктивни данни ---
+# Тук можете да заредите реални данни от CSV или API.
+data = {
+    'team1': ['Man City', 'Liverpool', 'Arsenal', 'Chelsea', 'Tottenham'],
+    'team2': ['Man United', 'Everton', 'Leicester', 'West Ham', 'Aston Villa'],
+    'odds_team1': [1.5, 2.3, 2.8, 2.0, 2.5],
+    'odds_team2': [2.8, 3.0, 3.5, 2.5, 3.0],
+    'value': [0.2, 0.15, 0.25, 0.1, 0.18],  # Value is a measure of expected profit.
+    'date': [datetime.now()] * 5
+}
 
-# Заглавие
-st.title("Стойностни залози - Премачове")
-st.subheader("Извличане на стойностни залози от API в реално време (демо с фиктивни данни)")
+# Създаване на DataFrame
+df = pd.DataFrame(data)
 
-# Избор на първенство
-leagues = ["Английска Висша лига", "Испанска Ла Лига", "Германска Бундеслига", "Италианска Серия А"]
-selected_league = st.selectbox("Избери първенство", leagues)
+# --- Функция за изчисляване на стойностни прогнози ---
+def calculate_bet_amount(bankroll, value, odds):
+    # Примерно изчисление за залог, взимайки предвид стойността и коефициента
+    bet = bankroll * value * odds
+    return bet
 
-# Настройки на банката и целта
-with st.expander("Настройки на банката"):
-    initial_bankroll = st.number_input("Начална банка (лв)", value=500)
-    goal_profit_percent = st.slider("Целева печалба (%)", 10, 100, 30)
-    goal_days = st.number_input("Срок за постигане (дни)", min_value=1, value=5)
-    dynamic_bet = st.checkbox("Изчислявай залога динамично според целта", value=True)
+# --- Създаване на интерфейс ---
+st.title('Стойностни залози - Премачове')
+st.write('Извличане на стойностни залози в реално време.')
 
-# Фиктивни данни (за демонстрация)
-teams = ["Ливърпул", "Ман Сити", "Арсенал", "Челси", "Манчестър Юн", "Тотнъм"]
-matches = []
+# Избиране на първенство (може да се добави пълна функционалност за първенства)
+league = st.selectbox('Избери първенство', ['Английска Висша лига', 'Испанска Ла Лига', 'Германска Бундеслига'])
 
-for _ in range(10):
-    home, away = random.sample(teams, 2)
-    odds_home = round(random.uniform(1.5, 3.5), 2)
-    model_prob = round(random.uniform(0.3, 0.7), 2)
-    implied_prob = round(1 / odds_home, 2)
-    value_pct = round((model_prob - implied_prob) * 100, 2)
-    if value_pct > 5:
-        matches.append({
-            "Мач": f"{home} - {away}",
-            "Коеф": odds_home,
-            "Вер. по модел": f"{int(model_prob*100)}%",
-            "Value %": f"{value_pct:.2f}%"
-        })
+# Избиране на мач за залог
+match = st.selectbox('Избери мач', df['team1'] + ' срещу ' + df['team2'])
 
-# Прогнози
-st.markdown("### Препоръчани стойностни залози за днес")
-if matches:
-    df = pd.DataFrame(matches)
-    st.dataframe(df, use_container_width=True)
+# Промяна на началната банка
+bankroll = st.number_input("Въведете начална банка", min_value=0, max_value=10000, value=1000)
+
+# Избор на залог
+bet_option = st.selectbox('Изберете залог', ['Отбор 1', 'Отбор 2'])
+
+# Изчисляване на стойностния залог
+selected_match = df[df['team1'] + ' срещу ' + df['team2'] == match]
+value = selected_match['value'].values[0]
+odds = selected_match['odds_team1'].values[0] if bet_option == 'Отбор 1' else selected_match['odds_team2'].values[0]
+bet_amount = calculate_bet_amount(bankroll, value, odds)
+
+# Показване на стойностния залог
+st.write(f'Препоръчителен залог за {bet_option}: {bet_amount:.2f} лв.')
+
+# Съхранение на залога
+if st.button('Заложи'):
+    st.write(f'Заложили сте {bet_amount:.2f} лв. на {bet_option}.')
+
+# --- История на залозите ---
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+# Записване в история
+if st.button('Запиши в история'):
+    st.session_state.history.append({
+        'team1': selected_match['team1'].values[0],
+        'team2': selected_match['team2'].values[0],
+        'bet': bet_option,
+        'amount': bet_amount,
+        'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# Показване на историята на залозите
+st.subheader("История на залозите")
+if st.session_state.history:
+    history_df = pd.DataFrame(st.session_state.history)
+    st.write(history_df)
 else:
-    st.info("Няма стойностни залози за момента. Опитай по-късно или смени първенството.")
-
-# История и статистика (фиктивна за сега)
-with st.expander("Статистика"):
-    st.markdown(f"- Начална банка: **{initial_bankroll:.2f} лв**")
-    st.markdown(f"- Целева печалба: **{goal_profit_percent}%** за **{goal_days} дни**")
-    st.markdown("- ROI: **12.3%**")
-    st.markdown("- Успеваемост: **61.5%**")
-    st.markdown("- Нетна печалба: **+83.50 лв**")
+    st.write("Няма залози в историята.")
