@@ -2,12 +2,13 @@ import streamlit as st
 import requests
 from datetime import datetime
 import pytz
+import math
 
 # API настройки
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
 SPORT = "soccer"
 REGIONS = "uk,us,eu,au"
-MARKETS = "h2h"
+MARKETS = "h2h,totals"
 ODDS_FORMAT = "decimal"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 local_tz = pytz.timezone("Europe/Sofia")
@@ -18,9 +19,8 @@ tabs = st.tabs(["Прогнози", "История", "Настройки"])
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Реални мачове от Европа (днес)")
-    st.caption("Данни от OddsAPI в реално време")
+    st.caption("Пазари: Краен изход, Над/Под голове")
 
-    # Достъп до стойности от сесията
     initial_bank = st.session_state.get("initial_bank", 500.0)
     target_profit = st.session_state.get("target_profit", 150.0)
     target_days = st.session_state.get("target_days", 5)
@@ -54,49 +54,67 @@ with tabs[0]:
             if 'bookmakers' not in match or len(match['bookmakers']) == 0:
                 continue
 
-            best_odds = {}
             for bookmaker in match['bookmakers']:
                 for market in bookmaker['markets']:
+                    # 1. Пазар: Краен изход (1X2)
                     if market['key'] == 'h2h':
+                        outcomes = market['outcomes']
+                        if len(outcomes) < 2:
+                            continue
+
+                        inv_probs = [1 / o['price'] for o in outcomes]
+                        fair_prob_sum = sum(inv_probs)
+
+                        for outcome in outcomes:
+                            fair_prob = (1 / outcome['price']) / fair_prob_sum
+                            value = outcome['price'] * fair_prob
+                            if value > 1.05:
+                                odds = outcome['price']
+                                value_pct = (value - 1)
+                                expected_edge = odds * value_pct - 1
+
+                                stake = daily_goal / expected_edge if expected_edge > 0 else 0
+                                stake = min(stake, 0.05 * initial_bank)
+                                stake_final = round(math.ceil(stake / 10) * 10)
+
+                                value_bets.append({
+                                    "Мач": f"{match['home_team']} vs {match['away_team']}",
+                                    "Пазар": outcome['name'],
+                                    "Тип": "1X2",
+                                    "Коефициент": odds,
+                                    "Букмейкър": bookmaker['title'],
+                                    "Value %": round(value_pct * 100, 2),
+                                    "Начален час": match_time_local.strftime("%H:%M"),
+                                    "Залог (лв)": stake_final
+                                })
+
+                    # 2. Пазар: Над/Под
+                    if market['key'] == 'totals':
                         for outcome in market['outcomes']:
-                            name = outcome['name']
-                            price = outcome['price']
-                            if name not in best_odds or price > best_odds[name]['price']:
-                                best_odds[name] = {
-                                    'price': price,
-                                    'bookmaker': bookmaker['title']
-                                }
+                            if 'point' not in outcome:
+                                continue
+                            label = f"{'Over' if 'Over' in outcome['name'] else 'Under'} {outcome['point']}"
+                            odds = outcome['price']
+                            fair_prob = 1 / odds
+                            value = odds * fair_prob
+                            if value > 1.05:
+                                value_pct = (value - 1)
+                                expected_edge = odds * value_pct - 1
 
-            if len(best_odds) < 2:
-                continue
+                                stake = daily_goal / expected_edge if expected_edge > 0 else 0
+                                stake = min(stake, 0.05 * initial_bank)
+                                stake_final = round(math.ceil(stake / 10) * 10)
 
-            inv_probs = [1 / info['price'] for info in best_odds.values()]
-            fair_prob_sum = sum(inv_probs)
-
-            for name, info in best_odds.items():
-                fair_prob = (1 / info['price']) / fair_prob_sum
-                value = info['price'] * fair_prob
-                if value > 1.05:
-                    odds = info['price']
-                    value_pct = (value - 1)
-                    expected_edge = odds * value_pct - 1
-
-                    if expected_edge > 0:
-                        stake = daily_goal / expected_edge
-                        max_stake = 0.05 * initial_bank  # max 5% от банката
-                        stake_final = round(min(stake, max_stake), 2)
-                    else:
-                        stake_final = "-"
-
-                    value_bets.append({
-                        "Мач": f"{match['home_team']} vs {match['away_team']}",
-                        "Пазар": name,
-                        "Коефициент": odds,
-                        "Букмейкър": info['bookmaker'],
-                        "Value %": round(value_pct * 100, 2),
-                        "Начален час": match_time_local.strftime("%H:%M"),
-                        "Залог (лв)": stake_final
-                    })
+                                value_bets.append({
+                                    "Мач": f"{match['home_team']} vs {match['away_team']}",
+                                    "Пазар": label,
+                                    "Тип": "Над/Под",
+                                    "Коефициент": odds,
+                                    "Букмейкър": bookmaker['title'],
+                                    "Value %": round(value_pct * 100, 2),
+                                    "Начален час": match_time_local.strftime("%H:%M"),
+                                    "Залог (лв)": stake_final
+                                })
 
         if value_bets:
             sorted_bets = sorted(value_bets, key=lambda x: -x["Value %"])
@@ -107,7 +125,7 @@ with tabs[0]:
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залози")
-    st.write("Тук ще се показват и записват направени залози (предстои разработка).")
+    st.write("Тук ще се записват направените залози (предстои).")
 
 # === ТАБ 3: Настройки ===
 with tabs[2]:
