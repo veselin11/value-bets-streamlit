@@ -8,7 +8,7 @@ tabs = st.tabs(["Прогнози", "История", "Настройки"])
 if "history" not in st.session_state:
     st.session_state["history"] = []
 
-# Фиктивни мачове
+# Фиктивни мачове с повече пазари
 fake_matches = [
     {
         "home": "Liverpool",
@@ -19,7 +19,8 @@ fake_matches = [
             "GG": {"yes": 1.8, "no": 2.0},
             "Over/Under 2.5": {"over": 1.95, "under": 1.9},
             "Over/Under 1.5": {"over": 1.4, "under": 2.8},
-            "Exact Score": {"1-0": 7.5, "2-1": 8.0, "2-2": 12.0}
+            "Exact Score": {"1-0": 7.5, "2-1": 8.0, "2-2": 12.0},
+            "Double Chance": {"1X": 1.3, "X2": 1.6, "12": 1.4}
         }
     },
     {
@@ -31,7 +32,8 @@ fake_matches = [
             "GG": {"yes": 1.7, "no": 2.2},
             "Over/Under 2.5": {"over": 2.0, "under": 1.85},
             "Over/Under 1.5": {"over": 1.5, "under": 2.5},
-            "Exact Score": {"1-0": 6.5, "2-1": 7.2, "3-2": 15.0}
+            "Exact Score": {"1-0": 6.5, "2-1": 7.2, "3-2": 15.0},
+            "Double Chance": {"1X": 1.35, "X2": 1.55, "12": 1.45}
         }
     }
 ]
@@ -46,7 +48,6 @@ with tabs[2]:
 
     total_bets = days * bets_per_day
     stake = round((target_profit / total_bets) / 10) * 10
-
     st.success(f"Препоръчителна сума на залог: {stake} лв")
 
 # Прогнози
@@ -56,22 +57,22 @@ with tabs[0]:
     for match in fake_matches:
         st.subheader(f"{match['home']} vs {match['away']} ({match['start']})")
         for market, options in match["markets"].items():
-            st.markdown(f"**{market}**")
-            cols = st.columns(len(options))
-            for i, (opt, odd) in enumerate(options.items()):
-                with cols[i]:
-                    if st.button(f"{opt} ({odd})", key=f"{match['home']}_{market}_{opt}"):
-                        st.session_state["history"].append({
-                            "Мач": f"{match['home']} vs {match['away']}",
-                            "Пазар": market,
-                            "Избор": opt,
-                            "Коефициент": odd,
-                            "Сума": stake,
-                            "Печалба": round(stake * odd, 2),
-                            "Час": match["start"],
-                            "Статус": "Очаква се"
-                        })
-                        st.success(f"Залог добавен: {opt} @ {odd}")
+            with st.expander(f"Пазар: {market}"):
+                cols = st.columns(len(options))
+                for i, (opt, odd) in enumerate(options.items()):
+                    with cols[i]:
+                        if st.button(f"{opt} @ {odd}", key=f"{match['home']}_{market}_{opt}"):
+                            st.session_state["history"].append({
+                                "Мач": f"{match['home']} vs {match['away']}",
+                                "Пазар": market,
+                                "Избор": opt,
+                                "Коефициент": odd,
+                                "Сума": stake,
+                                "Печалба": round(stake * odd, 2),
+                                "Час": match["start"],
+                                "Статус": "Очаква се"
+                            })
+                            st.success(f"Залог добавен: {opt} @ {odd}")
 
 # История
 with tabs[1]:
@@ -91,16 +92,9 @@ with tabs[1]:
             if st.button("Изчисти историята"):
                 st.session_state["history"] = []
 
+        # Печалба и статистика
         profit = sum(b["Печалба"] - b["Сума"] if b["Статус"] == "Печалба" else -b["Сума"]
                      for b in st.session_state["history"])
         wins = sum(1 for b in st.session_state["history"] if b["Статус"] == "Печалба")
         total = len(st.session_state["history"])
-        roi = (profit / (sum(b["Сума"] for b in st.session_state["history"])) * 100) if total else 0
-
-        st.metric("Обща печалба", f"{profit:.2f} лв")
-        st.metric("Успеваемост", f"{(wins / total) * 100:.1f}%")
-        st.metric("ROI", f"{roi:.2f}%")
-
-        st.dataframe(pd.DataFrame(st.session_state["history"]), use_container_width=True)
-    else:
-        st.info("Няма направени залози.")
+        roi = (profit / (sum(b["Сума"] for b in st.session_state["history"])) * 100
