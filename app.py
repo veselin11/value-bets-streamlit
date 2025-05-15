@@ -1,35 +1,59 @@
+import streamlit as st
 import requests
 from datetime import datetime
+import pytz
 
-# Ключът за достъп до OddsAPI
+# Настройки
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
+REGION = "eu"  # Европа
+MARKET = "h2h"  # 1X2 (победа/равен/загуба)
+DATE_FORMAT = "%Y-%m-%d"
 
-# Текуща дата във формат YYYY-MM-DD
-today = datetime.utcnow().strftime("%Y-%m-%d")
+st.set_page_config(page_title="Стойностни залози", layout="wide")
+st.title("Стойностни залози – Реални мачове от Европа (днес)")
 
-# Крайна точка на API за получаване на коефициенти
-url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
+# Дата днес във формат ISO
+today = datetime.now(pytz.timezone("Europe/Sofia")).strftime(DATE_FORMAT)
 
-# Параметри на заявката
-params = {
-    "apiKey": API_KEY,
-    "regions": "eu",  # Европейски букмейкъри
-    "markets": "h2h",  # 1X2 пазар
-    "oddsFormat": "decimal",
-    "dateFormat": "iso",
-    "date": today
-}
+# Извличане на коефициенти от API
+@st.cache_data(ttl=600)
+def get_odds():
+    url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+    params = {
+        "apiKey": API_KEY,
+        "regions": REGION,
+        "markets": MARKET,
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+    }
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        st.error("Грешка при зареждане на данни от OddsAPI.")
+        st.stop()
+    return response.json()
 
-# Изпращане на заявката
-response = requests.get(url, params=params)
-data = response.json()
+# Показване на резултатите
+data = get_odds()
 
-# Примерна проверка за първия мач
-first_game = data[0] if data else {}
-first_game_info = {
-    "teams": first_game.get("teams"),
-    "commence_time": first_game.get("commence_time"),
-    "bookmakers": first_game.get("bookmakers", [])
-}
+if not data:
+    st.warning("Няма налични мачове за днес.")
+else:
+    for match in data:
+        commence_time = match["commence_time"]
+        match_date = commence_time[:10]
 
-first_game_info
+        if match_date != today:
+            continue
+
+        teams = match["home_team"] + " vs " + match["away_team"]
+        st.subheader(teams)
+        st.text(f"Час: {commence_time[11:16]}")
+
+        for bookmaker in match.get("bookmakers", []):
+            st.markdown(f"**{bookmaker['title']}**")
+            cols = st.columns(len(bookmaker["markets"][0]["outcomes"]))
+            for i, outcome in enumerate(bookmaker["markets"][0]["outcomes"]):
+                with cols[i]:
+                    st.metric(outcome["name"], f"{outcome['price']}")
+
+        st.markdown("---")
