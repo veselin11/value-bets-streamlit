@@ -1,105 +1,85 @@
 import streamlit as st
 import pandas as pd
-import random
+import requests
 from datetime import datetime
-
-st.set_page_config(page_title="Стойностни залози", layout="wide")
-
-# Сесийна променлива за история
-if "bet_history" not in st.session_state:
-    st.session_state.bet_history = []
+import pytz
 
 # Настройки
-with st.sidebar:
-    st.title("Настройки на банката")
-    starting_bankroll = st.number_input("Начална банка (лв)", value=500.0)
-    daily_goal_percent = st.number_input("Дневна цел (% от банката)", value=6.0)
-    period_days = st.number_input("Период (дни)", value=5)
-    if "bankroll" not in st.session_state:
-        st.session_state.bankroll = starting_bankroll
+API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
+REGION = "eu"
+MARKET = "h2h"
+SPORT = "soccer"
+DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
-# Функция за изчисление на сумата за залог
-def calculate_bet_amount(bankroll, goal_percent, days):
-    total_target = bankroll * (goal_percent / 100) * days
-    daily_target = total_target / days
-    return round(daily_target, 2)
+# Текуща дата (UTC, защото така идват данните от OddsAPI)
+today = datetime.utcnow().date()
 
-bet_amount = calculate_bet_amount(st.session_state.bankroll, daily_goal_percent, period_days)
+# Заглавие
+st.title("Стойностни залози - ДНЕС")
+st.write("Автоматично извлечени залози чрез OddsAPI")
 
-# Фиктивни стойностни залози
-def generate_fake_value_bets():
-    teams = ["Арсенал", "Челси", "Манчестър Юн.", "Ливърпул", "Барселона", "Реал М.", "Байерн", "Ювентус"]
-    bets = []
-    for _ in range(10):
-        home, away = random.sample(teams, 2)
-        market = random.choice(["1", "X", "2", "Над 2.5", "Под 2.5", "ГГ", "НГ"])
-        odds = round(random.uniform(1.7, 3.5), 2)
-        fair_prob = random.uniform(0.35, 0.65)
-        implied_prob = 1 / odds
-        value_pct = round((fair_prob - implied_prob) * 100, 2)
-        if value_pct > 0:
-            bets.append({
-                "Мач": f"{home} - {away}",
-                "Пазар": market,
-                "Коеф.": odds,
-                "Value %": value_pct,
-                "Прогноза": market,
-                "Дата": datetime.now().strftime("%d.%m.%Y %H:%M")
-            })
-    return pd.DataFrame(bets)
+# Функция за извличане на коефициенти от API
+@st.cache_data(ttl=600)
+def get_odds():
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
+    params = {
+        "apiKey": API_KEY,
+        "regions": REGION,
+        "markets": MARKET,
+        "oddsFormat": "decimal",
+    }
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        st.error(f"API грешка: {response.status_code}")
+        return []
+    return response.json()
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(["Прогнози", "История", "Статистика"])
+# Извличане на коефициенти
+data = get_odds()
 
-# --- Прогнози ---
-with tab1:
-    st.header("Препоръчани стойностни залози")
-    df_bets = generate_fake_value_bets()
-    st.dataframe(df_bets, use_container_width=True)
+# Обработка на данните
+value_bets = []
 
-    selected = st.multiselect("Избери залози за добавяне в историята", df_bets["Мач"] + " | " + df_bets["Пазар"])
+for match in data:
+    try:
+        match_time = datetime.strptime(match["commence_time"], DATE_FORMAT).date()
+        if match_time != today:
+            continue
 
-    if st.button("Добави в историята"):
-        for val in selected:
-            row = df_bets[df_bets["Мач"] + " | " + df_bets["Пазар"] == val].iloc[0]
-            st.session_state.bet_history.append({
-                "Дата": row["Дата"],
-                "Мач": row["Мач"],
-                "Пазар": row["Пазар"],
-                "Коеф.": row["Коеф."],
-                "Value %": row["Value %"],
-                "Залог": bet_amount,
-                "Резултат": "?"  # по-късно се попълва
-            })
-        st.success("Залозите са добавени.")
+        teams = match["teams"]
+        bookmakers = match["bookmakers"]
 
-# --- История ---
-with tab2:
-    st.header("История на залозите")
-    df_hist = pd.DataFrame(st.session_state.bet_history)
-    if not df_hist.empty:
-        edited = st.data_editor(df_hist, num_rows="dynamic", use_container_width=True, key="editor")
-        st.session_state.bet_history = edited.to_dict("records")
-    else:
-        st.info("Все още няма добавени залози.")
+        for bookmaker in bookmakers:
+            for market in bookmaker["markets"]:
+                if market["key"] != MARKET:
+                    continue
 
-# --- Статистика ---
-with tab3:
-    st.header("Статистика")
-    df_hist = pd.DataFrame(st.session_state.bet_history)
-    if not df_hist.empty:
-        df = df_hist[df_hist["Резултат"].isin(["Печели", "Губи"])]
-        df["Печалба"] = df.apply(lambda x: x["Залог"] * (x["Коеф."] - 1) if x["Резултат"] == "Печели" else -x["Залог"], axis=1)
-        total_bets = len(df)
-        wins = len(df[df["Печалба"] > 0])
-        profit = df["Печалба"].sum()
-        roi = profit / (total_bets * bet_amount) * 100 if total_bets > 0 else 0
-        avg_value = df_hist["Value %"].mean()
+                outcomes = market["outcomes"]
+                for outcome in outcomes:
+                    team = outcome["name"]
+                    odds = outcome["price"]
 
-        st.metric("Общо залози", total_bets)
-        st.metric("Печалба (лв)", f"{profit:.2f}")
-        st.metric("ROI %", f"{roi:.2f}")
-        st.metric("Успеваемост", f"{wins / total_bets * 100:.1f}%" if total_bets else "—")
-        st.metric("Среден Value %", f"{avg_value:.2f}")
-    else:
-        st.info("Няма налични данни за статистика.")
+                    # Примерна value логика (фиктивна вероятност)
+                    estimated_prob = 1 / odds * 0.95
+                    fair_odds = 1 / estimated_prob
+                    value = odds - fair_odds
+
+                    if value > 0.2:
+                        value_bets.append({
+                            "Мач": f"{teams[0]} vs {teams[1]}",
+                            "Избор": team,
+                            "Коефициент": round(odds, 2),
+                            "Value": f"{round((value / fair_odds) * 100, 1)}%",
+                            "Букмейкър": bookmaker["title"],
+                            "Час": match["commence_time"][11:16]
+                        })
+    except Exception as e:
+        continue
+
+# Показване
+if value_bets:
+    df = pd.DataFrame(value_bets)
+    df = df.sort_values(by="Value", ascending=False)
+    st.dataframe(df, use_container_width=True)
+else:
+    st.warning("Няма стойностни залози за днес към момента.")
