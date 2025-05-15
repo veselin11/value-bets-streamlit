@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 import pytz
 
-# API настройки
+# === Настройки и API ===
 API_KEY = "a3d6004cbbb4d16e86e2837c27e465d8"
 SPORT = "soccer"
 REGIONS = "uk,us,eu,au"
@@ -12,13 +12,34 @@ ODDS_FORMAT = "decimal"
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 local_tz = pytz.timezone("Europe/Sofia")
 
+# === Streamlit Setup ===
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 tabs = st.tabs(["Прогнози", "История", "Настройки"])
+
+# === Session State ===
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+if "bank" not in st.session_state:
+    st.session_state.bank = 500.0
+
+if "target_profit" not in st.session_state:
+    st.session_state.target_profit = 150.0  # 30% от 500
+
+if "days" not in st.session_state:
+    st.session_state.days = 5
+
+# === Функция за изчисление на залог ===
+def calculate_bet_amount():
+    goal = st.session_state.target_profit
+    days = st.session_state.days
+    bets_per_day = 3
+    total_bets = bets_per_day * days
+    return round(goal / total_bets, 2)
 
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Реални мачове от Европа (днес)")
-    st.caption("Данни от OddsAPI в реално време")
 
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
     params = {
@@ -77,21 +98,49 @@ with tabs[0]:
                         "Коефициент": info['price'],
                         "Букмейкър": info['bookmaker'],
                         "Value %": round((value - 1) * 100, 2),
-                        "Начален час": match_time_local.strftime("%H:%M")
+                        "Начален час": match_time_local.strftime("%H:%M"),
+                        "Time": match_time_local.strftime("%Y-%m-%d %H:%M")
                     })
 
         if value_bets:
             df = sorted(value_bets, key=lambda x: -x["Value %"])
-            st.dataframe(df, use_container_width=True)
+            for i, bet in enumerate(df):
+                with st.expander(f"{bet['Мач']} – {bet['Пазар']} @ {bet['Коефициент']}"):
+                    st.write(f"**Коефициент:** {bet['Коефициент']}")
+                    st.write(f"**Value %:** {bet['Value %']}%")
+                    st.write(f"**Букмейкър:** {bet['Букмейкър']}")
+                    st.write(f"**Начален час:** {bet['Начален час']}")
+                    if st.button("Залагай", key=f"bet_{i}"):
+                        amount = calculate_bet_amount()
+                        st.session_state.history.append({
+                            "Мач": bet['Мач'],
+                            "Пазар": bet['Пазар'],
+                            "Коефициент": bet['Коефициент'],
+                            "Value %": bet['Value %'],
+                            "Час": bet['Time'],
+                            "Залог": amount
+                        })
+                        st.success(f"Заложено: {amount} лв. на {bet['Пазар']} @ {bet['Коефициент']}")
+
         else:
             st.info("Няма стойностни залози за днешните мачове в момента.")
 
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залози")
-    st.write("Тук ще се показват и записват направени залози (предстои разработка).")
+    if st.session_state.history:
+        st.dataframe(st.session_state.history, use_container_width=True)
+    else:
+        st.info("Все още няма залози.")
 
 # === ТАБ 3: Настройки ===
 with tabs[2]:
-    st.header("Настройки")
-    st.write("Предстоят настройки за избор на лиги, маркети, лимити и др.")
+    st.header("Настройки на банката и целта")
+    st.number_input("Начална банка (лв)", min_value=0.0, step=10.0,
+                    value=st.session_state.bank, key="bank")
+    st.number_input("Целева печалба (лв)", min_value=0.0, step=10.0,
+                    value=st.session_state.target_profit, key="target_profit")
+    st.number_input("Целева продължителност (дни)", min_value=1, max_value=30,
+                    value=st.session_state.days, key="days")
+
+    st.markdown(f"**Предложена сума за единичен залог:** {calculate_bet_amount()} лв.")
