@@ -4,14 +4,20 @@ import pandas as pd
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
-# Сесийна инициализация
+# === Сесийна инициализация ===
 if "history" not in st.session_state:
     st.session_state["history"] = []
 
 if "balance" not in st.session_state:
     st.session_state["balance"] = 500
 
-# Примерни стойностни мачове
+if "bet_method" not in st.session_state:
+    st.session_state["bet_method"] = "percent"
+
+if "bet_value" not in st.session_state:
+    st.session_state["bet_value"] = 5  # 5% по подразбиране
+
+# === Примерни стойностни мачове ===
 value_bets = [
     {"Мач": "Arsenal vs Chelsea", "Пазар": "1", "Коефициент": 2.2, "Value %": 6.5, "Начален час": "21:00"},
     {"Мач": "Real Madrid vs Barcelona", "Пазар": "ГГ", "Коефициент": 1.9, "Value %": 8.1, "Начален час": "22:00"},
@@ -36,14 +42,20 @@ with tabs[0]:
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
 
-            suggested_bet = round(st.session_state["balance"] * 0.05, -1)
+            # Изчисляване на сумата за залог
+            if st.session_state["bet_method"] == "percent":
+                suggested_bet = round(st.session_state["balance"] * st.session_state["bet_value"] / 100, -1)
+            else:
+                suggested_bet = st.session_state["bet_value"]
+
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
+                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
                     "Мач": row["Мач"],
                     "Пазар": row["Пазар"],
                     "Коефициент": row["Коефициент"],
                     "Сума": suggested_bet,
-                    "Печалба": 0.0,
+                    "Печалба": profit,
                     "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Статус": "Предстои"
                 })
@@ -52,39 +64,15 @@ with tabs[0]:
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залозите")
-
     if st.session_state["history"]:
-        for i, bet in enumerate(st.session_state["history"]):
-            container_color = "#f0fff0" if bet["Статус"] == "Печели" else "#fff0f0" if bet["Статус"] == "Губи" else "#f9f9f9"
-            with st.container():
-                st.markdown(f"<div style='background-color:{container_color}; padding:10px; border-radius:10px'>", unsafe_allow_html=True)
-                col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 1.5, 1.2, 1.2, 1.5, 1.5, 2])
-                col1.markdown(f"**{bet['Мач']}**")
-                col2.write(bet["Пазар"])
-                col3.write(f"{bet['Коефициент']:.2f}")
-                col4.write(f"{bet['Сума']} лв")
-                col5.write(f"{bet['Печалба']:.2f} лв")
-                col6.write(bet["Статус"])
+        history_df = pd.DataFrame(st.session_state["history"])
+        st.dataframe(history_df, use_container_width=True)
 
-                if bet["Статус"] == "Предстои":
-                    if col7.button("Печели", key=f"win_{i}"):
-                        bet["Статус"] = "Печели"
-                        bet["Печалба"] = round(bet["Сума"] * (bet["Коефициент"] - 1), 2)
-                        st.experimental_rerun()
-                    elif col7.button("Губи", key=f"lose_{i}"):
-                        bet["Статус"] = "Губи"
-                        bet["Печалба"] = -bet["Сума"]
-                        st.experimental_rerun()
-
-                st.markdown("</div>", unsafe_allow_html=True)
-
-        df = pd.DataFrame(st.session_state["history"])
-        total_bets = len(df)
-        total_staked = df["Сума"].sum()
-        total_profit = df["Печалба"].sum()
+        total_bets = len(history_df)
+        total_staked = sum(b["Сума"] for b in st.session_state["history"])
+        total_profit = sum(b["Печалба"] for b in st.session_state["history"])
         roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
 
-        st.markdown("---")
         col1, col2, col3 = st.columns(3)
         col1.metric("Залози", total_bets)
         col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
@@ -95,7 +83,24 @@ with tabs[1]:
 # === ТАБ 3: Настройки ===
 with tabs[2]:
     st.header("Настройки на системата")
+
     new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
+    st.subheader("Метод за изчисляване на залога")
+
+    method = st.selectbox("Избери метод", ["Процент от банката", "Фиксирана сума"], 
+                          index=0 if st.session_state["bet_method"] == "percent" else 1)
+
+    if method == "Процент от банката":
+        percent = st.slider("Процент от банката", min_value=1, max_value=20, value=st.session_state.get("bet_value", 5), step=1)
+        bet_method = "percent"
+        bet_value = percent
+    else:
+        fixed = st.number_input("Фиксирана сума (лв)", min_value=10, max_value=1000, value=st.session_state.get("bet_value", 50), step=10)
+        bet_method = "fixed"
+        bet_value = fixed
+
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
-        st.success("Новата банка е записана.")
+        st.session_state["bet_method"] = bet_method
+        st.session_state["bet_value"] = bet_value
+        st.success("Настройките са запазени успешно.")
