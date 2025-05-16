@@ -1,46 +1,53 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
-import matplotlib.pyplot as plt
+import random
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
-
-# === Sidebar ===
-st.sidebar.header("Настройки")
-bet_percent = st.sidebar.slider("Процент за залог", 1, 10, 5)
-initial_balance = st.sidebar.number_input("Начална банка", value=500.0, step=10.0)
-if st.sidebar.button("Нулирай сесията"):
-    st.session_state["history"] = []
-    st.session_state["balance"] = initial_balance
-    st.rerun()
 
 # === Сесийна инициализация ===
 if "history" not in st.session_state:
     st.session_state["history"] = []
 if "balance" not in st.session_state:
-    st.session_state["balance"] = initial_balance
+    st.session_state["balance"] = 500.0
 
-# === Примерни прогнози ===
-value_bets = [
-    {"Мач": "Барселона - Реал", "Пазар": "1Х", "Коефициент": 2.10, "Value %": 15, "Начален час": "22:00"},
-    {"Мач": "Арсенал - Челси", "Пазар": "Над 2.5", "Коефициент": 1.85, "Value %": 12, "Начален час": "21:30"},
-    {"Мач": "Байерн - Борусия", "Пазар": "Х2", "Коефициент": 3.25, "Value %": 18, "Начален час": "19:45"},
-    {"Мач": "Интер - Милан", "Пазар": "1", "Коефициент": 2.50, "Value %": 22, "Начален час": "20:00"},
-]
+# === Генериране на динамични стойностни прогнози ===
+def generate_value_bets(n=5):
+    teams = [("Барселона", "Реал"), ("Байерн", "Дортмунд"), ("Милан", "Интер"),
+             ("Ливърпул", "Ман Сити"), ("Ювентус", "Наполи"), ("Арсенал", "Челси")]
+    markets = ["1", "X", "2", "1X", "12", "Над 2.5", "Под 2.5", "Х2"]
+    value_bets = []
 
-# === Цветова индикация ===
+    for _ in range(n):
+        team1, team2 = random.choice(teams)
+        market = random.choice(markets)
+        odd = round(random.uniform(1.6, 3.5), 2)
+        value = random.randint(10, 25)
+        time = (datetime.now() + timedelta(minutes=random.randint(30, 240))).strftime("%H:%M")
+        value_bets.append({
+            "Мач": f"{team1} - {team2}",
+            "Пазар": market,
+            "Коефициент": odd,
+            "Value %": value,
+            "Начален час": time
+        })
+    return value_bets
+
+value_bets = generate_value_bets()
+
+# === Цветова индикация за сигурност ===
 def get_confidence_color(value_percent):
     if value_percent >= 20:
-        return "#b2f2bb"
+        return "#b2f2bb"  # зелено
     elif value_percent >= 15:
-        return "#ffe066"
+        return "#ffe066"  # жълто
     else:
-        return "#ffa8a8"
+        return "#ffa8a8"  # червено
 
-# === Tabs ===
+# === ТАБОВЕ ===
 tabs = st.tabs(["Прогнози", "История", "Статистика"])
 
-# === Tab 1: Прогнози ===
+# === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Днес")
     st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
@@ -58,8 +65,8 @@ with tabs[0]:
             )
 
             col1, _ = st.columns([1, 4])
-            if col1.button(f"Залог {round(st.session_state['balance'] * bet_percent / 100, -1)} лв", key=f"bet_{i}"):
-                suggested_bet = round(st.session_state["balance"] * bet_percent / 100, -1)
+            if col1.button(f"Залог {round(st.session_state['balance'] * 0.05, -1)} лв", key=f"bet_{i}"):
+                suggested_bet = round(st.session_state["balance"] * 0.05, -1)
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
                     "Мач": row["Мач"],
@@ -73,7 +80,7 @@ with tabs[0]:
                 st.success(f"Залогът е добавен за {row['Мач']}")
                 st.rerun()
 
-# === Tab 2: История ===
+# === ТАБ 2: История ===
 with tabs[1]:
     st.title("История на залозите")
     hist_df = pd.DataFrame(st.session_state["history"])
@@ -98,27 +105,12 @@ with tabs[1]:
             with cols[3]:
                 st.markdown(f"<div style='background-color:{bg}; padding:5px; border-radius:5px'>{row['Сума']} лв</div>", unsafe_allow_html=True)
             with cols[4]:
-                new_status = st.selectbox("", ["Предстои", "Печели", "Губи"], index=["Предстои", "Печели", "Губи"].index(row["Статус"]), key=f"status_{i}")
-                old_status = st.session_state["history"][i]["Статус"]
-                if new_status != old_status:
-                    if new_status == "Печели":
-                        st.session_state["balance"] += row["Печалба"]
-                    elif new_status == "Губи":
-                        st.session_state["balance"] -= row["Сума"]
-                    elif old_status == "Печели":
-                        st.session_state["balance"] -= row["Печалба"]
-                    elif old_status == "Губи":
-                        st.session_state["balance"] += row["Сума"]
-                    st.session_state["history"][i]["Статус"] = new_status
-                    st.rerun()
-
-        # Експорт
-        csv = hist_df.to_csv(index=False).encode("utf-8")
-        st.download_button("Изтегли като CSV", data=csv, file_name="history.csv", mime="text/csv")
+                status = st.selectbox("", ["Предстои", "Печели", "Губи"], index=["Предстои", "Печели", "Губи"].index(row["Статус"]), key=f"status_{i}")
+                st.session_state["history"][i]["Статус"] = status
     else:
         st.info("Няма още запазени залози.")
 
-# === Tab 3: Статистика ===
+# === ТАБ 3: Статистика ===
 with tabs[2]:
     st.title("Обща статистика")
     df = pd.DataFrame(st.session_state["history"])
@@ -126,16 +118,13 @@ with tabs[2]:
         total_bets = len(df)
         won = df[df["Статус"] == "Печели"]
         lost = df[df["Статус"] == "Губи"]
+
         net_profit = won["Печалба"].sum() - lost["Сума"].sum()
         roi = net_profit / df["Сума"].sum() * 100 if df["Сума"].sum() > 0 else 0
-        success_rate = len(won) / total_bets * 100 if total_bets > 0 else 0
-        avg_profit = net_profit / total_bets if total_bets > 0 else 0
 
         st.metric("Залози", total_bets)
         st.metric("Печалба", f"{net_profit:.2f} лв")
         st.metric("ROI", f"{roi:.2f}%")
-        st.metric("Успеваемост", f"{success_rate:.1f}%")
-        st.metric("Средна печалба на залог", f"{avg_profit:.2f} лв")
 
         st.line_chart(df.groupby("Дата")["Печалба"].sum().cumsum())
     else:
