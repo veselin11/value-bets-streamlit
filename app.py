@@ -1,70 +1,117 @@
 import streamlit as st
 import pandas as pd
-import datetime
+from datetime import datetime
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Value Bets Tracker", layout="wide")
-
-# Заглавие
-st.title("История на залозите")
-
-# Dummy база за история (в реалното приложение се зарежда от база или файл)
+# === Сесийна инициализация ===
 if "history" not in st.session_state:
-    st.session_state.history = []
+    st.session_state["history"] = []
+if "balance" not in st.session_state:
+    st.session_state["balance"] = 500.0
 
-# Форма за добавяне на нов запис
-with st.expander("Добави нов залог"):
-    col1, col2 = st.columns(2)
-    with col1:
-        date = st.date_input("Дата", datetime.date.today())
-        bet_type = st.selectbox("Тип залог", ["1", "X", "2", "Over", "Under", "Asian Handicap"])
-        stake = st.number_input("Залог (лв)", min_value=1.0, step=1.0)
-    with col2:
-        match = st.text_input("Мач")
-        odds = st.number_input("Коефициент", min_value=1.01, step=0.01)
-        result = st.selectbox("Резултат", ["Чака се", "Спечелен", "Загубен"])
+# === Примерни прогнози ===
+value_bets = [
+    {"Мач": "Барселона - Реал", "Пазар": "1Х", "Коефициент": 2.10, "Value %": 15, "Начален час": "22:00"},
+    {"Мач": "Арсенал - Челси", "Пазар": "Над 2.5", "Коефициент": 1.85, "Value %": 12, "Начален час": "21:30"},
+    {"Мач": "Байерн - Борусия", "Пазар": "Х2", "Коефициент": 3.25, "Value %": 18, "Начален час": "19:45"},
+    {"Мач": "Интер - Милан", "Пазар": "1", "Коефициент": 2.50, "Value %": 22, "Начален час": "20:00"},
+]
 
-    if st.button("Добави залог"):
-        st.session_state.history.append({
-            "Дата": date.strftime("%Y-%m-%d"),
-            "Мач": match,
-            "Тип": bet_type,
-            "Коефициент": odds,
-            "Залог": stake,
-            "Резултат": result
-        })
-        st.success("Залогът е добавен успешно.")
+# === Цветови индикатор за value ===
+def get_confidence_color(value_percent):
+    if value_percent >= 20:
+        return "#b2f2bb"
+    elif value_percent >= 15:
+        return "#ffe066"
+    else:
+        return "#ffa8a8"
 
-# Преобразуване в DataFrame
-if st.session_state.history:
-    df = pd.DataFrame(st.session_state.history)
+# === Tabs ===
+tabs = st.tabs(["Прогнози", "История", "Статистика"])
 
-    # Изчисляване на печалба
-    def calc_profit(row):
-        if row["Резултат"] == "Спечелен":
-            return round(row["Залог"] * (row["Коефициент"] - 1), 2)
-        elif row["Резултат"] == "Загубен":
-            return -row["Залог"]
-        return 0.0
+# === TAB 1: Прогнози ===
+with tabs[0]:
+    st.title("Стойностни залози – Днес")
+    st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
 
-    df["Печалба (лв)"] = df.apply(calc_profit, axis=1)
+    df = pd.DataFrame(value_bets)
 
-    # Обща статистика
-    total_bets = len(df)
-    won_bets = df[df["Резултат"] == "Спечелен"].shape[0]
-    lost_bets = df[df["Резултат"] == "Загубен"].shape[0]
-    waiting = df[df["Резултат"] == "Чака се"].shape[0]
-    total_profit = df["Печалба (лв)"].sum()
-    roi = (total_profit / df["Залог"].sum()) * 100 if df["Залог"].sum() > 0 else 0
+    for i, row in df.iterrows():
+        bg_color = get_confidence_color(row["Value %"])
+        with st.container():
+            st.markdown(
+                f"""<div style="background-color: {bg_color}; padding: 10px; border-radius: 10px; margin-bottom: 10px;">
+                    <b>{row['Мач']}</b> | Пазар: {row['Пазар']} | Коеф.: {row['Коефициент']:.2f} | Value: {row['Value %']}% | Час: {row['Начален час']}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            bet_amount = round(st.session_state['balance'] * 0.05, -1)
+            col1, _ = st.columns([1, 4])
+            if col1.button(f"Залог {bet_amount} лв", key=f"bet_{i}"):
+                profit = round((row["Коефициент"] - 1) * bet_amount, 2)
+                st.session_state["history"].append({
+                    "Мач": row["Мач"],
+                    "Пазар": row["Пазар"],
+                    "Коефициент": row["Коефициент"],
+                    "Сума": bet_amount,
+                    "Печалба": profit,
+                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Статус": "Предстои"
+                })
+                st.success(f"Залогът е добавен за {row['Мач']}")
+                st.rerun()
 
-    st.subheader("Статистика")
-    st.markdown(f"**Общо залози:** {total_bets}")
-    st.markdown(f"**Спечелени:** {won_bets} | Загубени: {lost_bets} | Чака се: {waiting}")
-    st.markdown(f"**Обща печалба:** {total_profit:.2f} лв")
-    st.markdown(f"**ROI:** {roi:.2f}%")
+# === TAB 2: История ===
+with tabs[1]:
+    st.title("История на залозите")
 
-    st.subheader("История")
-    st.dataframe(df, use_container_width=True)
+    df_hist = pd.DataFrame(st.session_state["history"])
+    if not df_hist.empty:
+        status_filter = st.selectbox("Филтрирай по статус", ["Всички", "Предстои", "Печели", "Губи"])
+        if status_filter != "Всички":
+            df_hist = df_hist[df_hist["Статус"] == status_filter]
 
-else:
-    st.info("Няма въведени залози все още.")
-    
+        st.markdown("### Залози")
+        for i, row in df_hist.iterrows():
+            st.markdown(
+                f"""<div style="background-color: #f8f9fa; padding: 10px; border-radius: 10px; margin-bottom: 8px;">
+                    <b>{row['Мач']}</b> | Пазар: {row['Пазар']} | Коеф.: {row['Коефициент']} | Сума: {row['Сума']} лв | 
+                    Печалба: {row['Печалба']} лв | Статус: <b>{row['Статус']}</b> | <i>{row['Дата']}</i>
+                </div>""",
+                unsafe_allow_html=True
+            )
+
+        st.markdown("---")
+        st.info("За да променяш статуси или триеш залози, ще добавим отделен екран при нужда.")
+    else:
+        st.info("Няма запазени залози.")
+
+# === TAB 3: Статистика ===
+with tabs[2]:
+    st.title("Обща статистика")
+
+    df = pd.DataFrame(st.session_state["history"])
+    if not df.empty:
+        total_bets = len(df)
+        won = df[df["Статус"] == "Печели"]
+        lost = df[df["Статус"] == "Губи"]
+        net_profit = won["Печалба"].sum() - lost["Сума"].sum()
+        roi = net_profit / df["Сума"].sum() * 100 if df["Сума"].sum() > 0 else 0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Общо залози", total_bets)
+        col2.metric("Нетна печалба", f"{net_profit:.2f} лв")
+        col3.metric("ROI", f"{roi:.2f}%")
+
+        st.markdown("### Графика на натрупана печалба")
+        chart_df = df.copy()
+        chart_df["Дата"] = pd.to_datetime(chart_df["Дата"])
+        chart_df = chart_df.sort_values("Дата")
+        chart_df["Натрупана печалба"] = chart_df.apply(
+            lambda row: row["Печалба"] if row["Статус"] == "Печели"
+            else -row["Сума"] if row["Статус"] == "Губи" else 0, axis=1
+        ).cumsum()
+
+        st.line_chart(chart_df.set_index("Дата")["Натрупана печалба"])
+    else:
+        st.info("Няма достатъчно данни за статистика.")
