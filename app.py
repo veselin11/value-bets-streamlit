@@ -2,6 +2,8 @@ import streamlit as st
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 from io import BytesIO
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
@@ -40,12 +42,13 @@ with tabs[0]:
 
             suggested_bet = round(st.session_state["balance"] * 0.05, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
+                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
                     "Мач": row["Мач"],
                     "Пазар": row["Пазар"],
                     "Коефициент": row["Коефициент"],
                     "Сума": suggested_bet,
-                    "Печалба": 0.0,
+                    "Печалба": profit,
                     "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Статус": "Предстои"
                 })
@@ -57,74 +60,55 @@ with tabs[1]:
 
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
-        for i, row in history_df.iterrows():
-            with st.container(border=True):
-                col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 1.5, 1.2, 1.2, 2, 2, 3])
-                col1.markdown(f"**{row['Мач']}**")
-                col2.write(row["Пазар"])
-                col3.write(f"{row['Коефициент']:.2f}")
-                col4.write(f"{row['Сума']} лв")
-                col5.write(row["Дата"])
-                col6.write(f"{row['Статус']}")
 
-                if row["Статус"] == "Предстои":
-                    if col7.button("Познат", key=f"win_{i}"):
-                        st.session_state["history"][i]["Статус"] = "Познат"
-                        st.session_state["history"][i]["Печалба"] = round((row["Коефициент"] - 1) * row["Сума"], 2)
-                        st.session_state["balance"] += st.session_state["history"][i]["Печалба"]
-                        st.rerun()
-                    if col7.button("Грешен", key=f"lose_{i}"):
-                        st.session_state["history"][i]["Статус"] = "Грешен"
-                        st.session_state["history"][i]["Печалба"] = -row["Сума"]
-                        st.session_state["balance"] += st.session_state["history"][i]["Печалба"]
-                        st.rerun()
+        # Филтър по статус
+        selected_status = st.selectbox("Филтрирай по статус", ["Всички", "Предстои", "Спечелен", "Загубен"])
+        if selected_status != "Всички":
+            history_df = history_df[history_df["Статус"] == selected_status]
 
-        total_bets = len(st.session_state["history"])
-        total_staked = sum(b["Сума"] for b in st.session_state["history"])
-        total_profit = sum(b["Печалба"] for b in st.session_state["history"])
+        st.dataframe(history_df, use_container_width=True)
+
+        total_bets = len(history_df)
+        total_staked = sum(history_df["Сума"])
+        total_profit = sum(history_df["Печалба"])
         roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Общо залози", total_bets)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Залози", total_bets)
         col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
         col3.metric("ROI", f"{roi:.2f}%")
-        col4.metric("Текуща банка", f"{st.session_state['balance']:.2f} лв")
 
-        # --- Графика на печалбата във времето ---
-        df_profit = pd.DataFrame(st.session_state["history"])
-        df_profit["Баланс"] = 500 + df_profit["Печалба"].cumsum()
-        df_profit["Дата"] = pd.to_datetime(df_profit["Дата"])
-        df_profit = df_profit.sort_values("Дата")
+        # Графика на печалбата
+        if len(history_df) > 1:
+            st.subheader("Графика на натрупаната печалба")
+            history_df_sorted = history_df.sort_values("Дата")
+            history_df_sorted["Кумулативна печалба"] = history_df_sorted["Печалба"].cumsum()
 
-        st.subheader("Графика на растежа на банката")
-        fig, ax = plt.subplots()
-        ax.plot(df_profit["Дата"], df_profit["Баланс"], marker='o')
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Баланс (лв)")
-        ax.grid(True)
-        st.pyplot(fig)
+            fig, ax = plt.subplots(figsize=(10, 4))
+            sns.lineplot(x=history_df_sorted["Дата"], y=history_df_sorted["Кумулативна печалба"], ax=ax, marker="o")
+            plt.xticks(rotation=45)
+            plt.ylabel("Кум. печалба (лв)")
+            plt.grid(True)
+            st.pyplot(fig)
 
-        # --- Експорт на Excel ---
+        # Експорт в Excel
         def to_excel(df):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="История")
-            return output.getvalue()
+            output.seek(0)
+            return output
 
         excel_data = to_excel(history_df)
-        st.download_button(
-            label="Свали като Excel файл",
-            data=excel_data,
-            file_name="istoria_zalozi.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("Свали Excel", data=excel_data, file_name="istoriya_zalozi.xlsx")
+
     else:
         st.info("Няма още заложени мачове.")
 
 # === ТАБ 3: Настройки ===
 with tabs[2]:
     st.header("Настройки на системата")
-    new_balance = st.number_input("Начална банка", min_value=100, value=int(st.session_state["balance"]), step=10)
+    new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
         st.success("Новата банка е запазена.")
