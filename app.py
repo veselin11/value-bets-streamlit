@@ -1,73 +1,82 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# API настройки
-API_KEY = "ee1ece21c66842fd34b7a13f3e6d2730"
-BASE_URL = "https://v3.football.api-sports.io"
+# === API CONFIG ===
+API_KEY = "ТВОЯ_API_КЛЮЧ_ТУК"
+API_HOST = "v3.football.api-sports.io"
+BASE_URL = f"https://{API_HOST}"
 
-HEADERS = {
-    "x-apisports-key": API_KEY
+headers = {
+    "x-apisports-key": API_KEY,
+    "x-rapidapi-host": API_HOST,
 }
 
-# Функция за зареждане на наличните лиги
-def get_leagues():
-    url = f"{BASE_URL}/leagues"
-    response = requests.get(url, headers=HEADERS)
-    data = response.json()
-    leagues = data.get("response", [])
-    options = [
-        {"name": f'{l["league"]["name"]} ({l["country"]["name"]})', "id": l["league"]["id"], "season": l["seasons"][-1]["year"]}
-        for l in leagues if l["league"]["type"] == "League"
-    ]
-    return options
+# === APP CONFIG ===
+st.set_page_config(page_title="Value Bets", layout="wide")
+st.title("⚽ Value Bets – Live и Предстоящи мачове")
 
-# Функция за зареждане на предстоящи мачове
-def get_fixtures(league_id, season, date_str):
+# === ФУНКЦИИ ===
+
+@st.cache_data(ttl=3600)
+def fetch_leagues():
+    url = f"{BASE_URL}/leagues"
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    leagues = [
+        {
+            "id": l["league"]["id"],
+            "name": f'{l["league"]["name"]} ({l["country"]["name"]})',
+            "season": l["seasons"][-1]["year"]
+        }
+        for l in data["response"]
+        if l["league"]["type"] == "League" and l["seasons"][-1]["coverage"]["fixtures"]["events"]
+    ]
+    return sorted(leagues, key=lambda x: x["name"])
+
+def fetch_fixtures(league_id, season, date):
     url = f"{BASE_URL}/fixtures"
     params = {
         "league": league_id,
         "season": season,
-        "date": date_str
+        "date": date
     }
-    response = requests.get(url, headers=HEADERS, params=params)
-    data = response.json()
-    fixtures = data.get("response", [])
+    response = requests.get(url, headers=headers, params=params)
+    fixtures = response.json().get("response", [])
     matches = []
-    for f in fixtures:
+    for match in fixtures:
         matches.append({
-            "Дата": f["fixture"]["date"][:10],
-            "Час": f["fixture"]["date"][11:16],
-            "Домакин": f["teams"]["home"]["name"],
-            "Гост": f["teams"]["away"]["name"],
-            "Стадион": f["fixture"]["venue"]["name"] or "N/A"
+            "Дата": match["fixture"]["date"][:10],
+            "Час": match["fixture"]["date"][11:16],
+            "Домакин": match["teams"]["home"]["name"],
+            "Гост": match["teams"]["away"]["name"],
+            "ID": match["fixture"]["id"]
         })
     return pd.DataFrame(matches)
 
-# Streamlit интерфейс
-st.set_page_config(page_title="Value Bets App", layout="wide")
-st.title("📊 Value Bets App – Реални предстоящи мачове")
+def fake_prediction_logic(df):
+    # Тук ще добавим ML модел по-късно
+    df["Прогноза"] = "1"  # фиктивно: домакин печели
+    df["Коефициент"] = 2.10  # фиктивен коефициент
+    df["Value %"] = round((1/0.45) * 100 - 100, 2)  # примерна стойност
+    return df
 
-# Зареждане на лиги
-with st.spinner("Зареждане на лиги..."):
-    leagues = get_leagues()
+# === UI: Избор на първенство и дата ===
+leagues = fetch_leagues()
+league_names = [l["name"] for l in leagues]
+selected_league = st.selectbox("Избери първенство:", league_names)
+selected_date = st.date_input("Избери дата:", value=datetime.today())
 
-league_options = {l["name"]: l for l in leagues}
-selected_league_name = st.selectbox("Избери лига", list(league_options.keys()))
-selected_league = league_options[selected_league_name]
+# === Зареждане на мачовете ===
+league_obj = next(l for l in leagues if l["name"] == selected_league)
+fixtures_df = fetch_fixtures(league_obj["id"], league_obj["season"], selected_date.strftime("%Y-%m-%d"))
 
-# Избор на дата
-today = datetime.today().date()
-selected_date = st.date_input("Избери дата за мачове", today)
+if fixtures_df.empty:
+    st.warning("Няма налични мачове за избраната дата.")
+else:
+    fixtures_df = fake_prediction_logic(fixtures_df)
+    st.success(f"Намерени {len(fixtures_df)} мача за {selected_date.strftime('%Y-%m-%d')}:")
+    st.dataframe(fixtures_df, use_container_width=True)
 
-# Зареждане на мачове
-if st.button("🔍 Зареди мачовете"):
-    with st.spinner("Зареждане на мачове..."):
-        date_str = selected_date.strftime("%Y-%m-%d")
-        matches_df = get_fixtures(selected_league["id"], selected_league["season"], date_str)
-        if matches_df.empty:
-            st.warning("Няма мачове за избраната дата.")
-        else:
-            st.success(f"Намерени мачове: {len(matches_df)}")
-            st.dataframe(matches_df, use_container_width=True)
+# === TODO: При желание може да добавим бутон "Залагай", история, ROI и графика ===
