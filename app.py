@@ -4,17 +4,20 @@ import pandas as pd
 import io
 import matplotlib.pyplot as plt
 
-# Конфигурация на страницата
+# --- Конфигурация ---
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
-# Сесийна инициализация
+# --- Сесия ---
 if "history" not in st.session_state:
     st.session_state["history"] = []
 
 if "balance" not in st.session_state:
     st.session_state["balance"] = 500
 
-# Примерни стойностни мачове
+if "stake_percent" not in st.session_state:
+    st.session_state["stake_percent"] = 5  # % от банката
+
+# --- Примерни мачове ---
 value_bets = [
     {"Мач": "Arsenal vs Chelsea", "Пазар": "1", "Коефициент": 2.2, "Value %": 6.5, "Начален час": "21:00"},
     {"Мач": "Real Madrid vs Barcelona", "Пазар": "ГГ", "Коефициент": 1.9, "Value %": 8.1, "Начален час": "22:00"},
@@ -26,8 +29,6 @@ tabs = st.tabs(["Прогнози", "История", "Графики", "Нас�
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Симулирани данни")
-    st.caption("Кликни на Сума за залог, за да запишеш мача в историята")
-
     df = pd.DataFrame(value_bets)
 
     for i, row in df.iterrows():
@@ -39,7 +40,7 @@ with tabs[0]:
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
 
-            suggested_bet = round(st.session_state["balance"] * 0.05, -1)  # 5% от банката, закръглено
+            suggested_bet = round(st.session_state["balance"] * st.session_state["stake_percent"] / 100, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
@@ -58,6 +59,25 @@ with tabs[1]:
     st.header("История на залозите")
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
+
+        # Добавяне на падащи менюта за резултат
+        for i in range(len(history_df)):
+            if history_df.at[i, "Статус"] == "Предстои":
+                result = st.selectbox(
+                    f"Резултат: {history_df.at[i, 'Мач']} ({history_df.at[i, 'Пазар']})",
+                    options=["-", "Печели", "Губи"],
+                    key=f"result_{i}"
+                )
+                if result == "Печели":
+                    history_df.at[i, "Статус"] = "Печели"
+                    history_df.at[i, "Печалба"] = round((history_df.at[i, "Коефициент"] - 1) * history_df.at[i, "Сума"], 2)
+                elif result == "Губи":
+                    history_df.at[i, "Статус"] = "Губи"
+                    history_df.at[i, "Печалба"] = -history_df.at[i, "Сума"]
+
+        # Запазване на актуализирана история
+        st.session_state["history"] = history_df.to_dict("records")
+
         st.dataframe(history_df, use_container_width=True)
 
         total_bets = len(history_df)
@@ -70,7 +90,6 @@ with tabs[1]:
         col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
         col3.metric("ROI", f"{roi:.2f}%")
 
-        # Експорт в Excel
         def to_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -87,11 +106,13 @@ with tabs[2]:
     st.header("Графика на печалбата")
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
-        history_df["Натрупана печалба"] = history_df["Печалба"].cumsum()
         history_df["Дата"] = pd.to_datetime(history_df["Дата"])
+        history_df = history_df.sort_values("Дата")
+        history_df["Натрупана печалба"] = history_df["Печалба"].cumsum()
 
         fig, ax = plt.subplots()
-        ax.plot(history_df["Дата"], history_df["Натрупана печалба"], marker="o", linestyle="-", color="green")
+        ax.plot(history_df["Дата"], history_df["Натрупана печалба"], marker="o", linestyle="-",
+                color="green" if history_df["Натрупана печалба"].iloc[-1] >= 0 else "red")
         ax.set_title("Натрупана печалба във времето")
         ax.set_xlabel("Дата")
         ax.set_ylabel("Печалба (лв)")
@@ -103,8 +124,20 @@ with tabs[2]:
 # === ТАБ 4: Настройки ===
 with tabs[3]:
     st.header("Настройки на системата")
+
     new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
-    if st.button("Запази"):
-        st.session_state["balance"] = new_balance
-        st.success("Новата банка е запазена!")
-        st.rerun()  # Актуализира изгледа
+    stake_percent = st.slider("Процент от банката за залог", min_value=1, max_value=20, value=st.session_state["stake_percent"], step=1)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Запази"):
+            st.session_state["balance"] = new_balance
+            st.session_state["stake_percent"] = stake_percent
+            st.success("Настройките са запазени.")
+            st.rerun()
+
+    with col2:
+        if st.button("Изчисти историята"):
+            st.session_state["history"] = []
+            st.success("Историята е изчистена!")
+            st.rerun()
