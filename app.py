@@ -1,109 +1,110 @@
 import streamlit as st
+from datetime import datetime
 import pandas as pd
 import io
-from datetime import datetime
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Value Bets", layout="wide")
+# Конфигурация на страницата
+st.set_page_config(page_title="Стойностни залози", layout="wide")
 
-# Настройки на банката и залога
-st.sidebar.header("Настройки на банката")
-initial_bank = st.sidebar.number_input("Начална банка", min_value=0.0, value=500.0, step=10.0)
-goal_profit = st.sidebar.number_input("Целева печалба (в %)", min_value=1, max_value=100, value=30)
-goal_days = st.sidebar.number_input("Срок (в дни)", min_value=1, max_value=30, value=5)
-
-daily_goal_profit = (goal_profit / 100) / goal_days
-current_bank = initial_bank
-
-# История на залозите (запазена в сесията)
+# Сесийна инициализация
 if "history" not in st.session_state:
-    st.session_state.history = []
+    st.session_state["history"] = []
 
-st.title("Value Bets Приложение")
+if "balance" not in st.session_state:
+    st.session_state["balance"] = 500
 
-# Dummy value прогнози (пример)
+# Примерни стойностни мачове
 value_bets = [
-    {"Мач": "Team A vs Team B", "Пазар": "1X2", "Залог": "1", "Коеф": 2.20, "Вероятност": 0.55},
-    {"Мач": "Team C vs Team D", "Пазар": "Над/Под", "Залог": "Над 2.5", "Коеф": 1.95, "Вероятност": 0.54},
-    {"Мач": "Team E vs Team F", "Пазар": "1X2", "Залог": "2", "Коеф": 3.10, "Вероятност": 0.36}
+    {"Мач": "Arsenal vs Chelsea", "Пазар": "1", "Коефициент": 2.2, "Value %": 6.5, "Начален час": "21:00"},
+    {"Мач": "Real Madrid vs Barcelona", "Пазар": "ГГ", "Коефициент": 1.9, "Value %": 8.1, "Начален час": "22:00"},
+    {"Мач": "Bayern vs Dortmund", "Пазар": "Над 2.5", "Коефициент": 2.05, "Value %": 7.2, "Начален час": "19:30"},
 ]
 
-# Преобразуване в DataFrame и изчисление на value %
-df = pd.DataFrame(value_bets)
-df["Value %"] = round((df["Коеф"] * df["Вероятност"] - 1) * 100, 2)
+tabs = st.tabs(["Прогнози", "История", "Графики", "Настройки"])
 
-st.subheader("Предложения за стойностни залози")
-st.dataframe(df, use_container_width=True)
+# === ТАБ 1: Прогнози ===
+with tabs[0]:
+    st.title("Стойностни залози – Симулирани данни")
+    st.caption("Кликни на Сума за залог, за да запишеш мача в историята")
 
-# Избор и добавяне към историята
-st.markdown("### Добави залог към историята")
+    df = pd.DataFrame(value_bets)
 
-selected_index = st.selectbox("Избери залог", df.index, format_func=lambda i: f"{df.loc[i, 'Мач']} – {df.loc[i, 'Залог']}")
-stake_percent = st.slider("Процент от банката за залог", 1, 10, 2)
-selected_bet = df.loc[selected_index]
+    for i, row in df.iterrows():
+        with st.container(border=True):
+            col1, col2, col3, col4, col5, col6 = st.columns([3, 1.5, 1.2, 1.2, 1.2, 2])
+            col1.markdown(f"**{row['Мач']}**")
+            col2.write(row["Пазар"])
+            col3.write(f"{row['Коефициент']:.2f}")
+            col4.write(f"{row['Value %']}%")
+            col5.write(row["Начален час"])
 
-stake_amount = round(current_bank * stake_percent / 100, 2)
+            suggested_bet = round(st.session_state["balance"] * 0.05, -1)  # 5% от банката, закръглено
+            if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
+                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
+                st.session_state["history"].append({
+                    "Мач": row["Мач"],
+                    "Пазар": row["Пазар"],
+                    "Коефициент": row["Коефициент"],
+                    "Сума": suggested_bet,
+                    "Печалба": profit,
+                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Статус": "Предстои"
+                })
+                st.success(f"Заложено {suggested_bet} лв на {row['Мач']} – {row['Пазар']}")
 
-if st.button("Добави залог"):
-    st.session_state.history.append({
-        "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "Мач": selected_bet["Мач"],
-        "Пазар": selected_bet["Пазар"],
-        "Залог": selected_bet["Залог"],
-        "Коеф": selected_bet["Коеф"],
-        "Value %": selected_bet["Value %"],
-        "Сума": stake_amount,
-        "Статус": "Отворен",
-        "Печалба": None
-    })
-    st.success("Залогът е добавен успешно!")
+# === ТАБ 2: История ===
+with tabs[1]:
+    st.header("История на залозите")
+    if st.session_state["history"]:
+        history_df = pd.DataFrame(st.session_state["history"])
+        st.dataframe(history_df, use_container_width=True)
 
-# История и резултати
-st.markdown("### История на залозите")
+        total_bets = len(history_df)
+        total_staked = sum(b["Сума"] for b in st.session_state["history"])
+        total_profit = sum(b["Печалба"] for b in st.session_state["history"])
+        roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
 
-history_df = pd.DataFrame(st.session_state.history)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Залози", total_bets)
+        col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
+        col3.metric("ROI", f"{roi:.2f}%")
 
-if not history_df.empty:
-    edited_df = st.data_editor(history_df, num_rows="dynamic", use_container_width=True, key="editor")
+        # Експорт в Excel
+        def to_excel(df):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df.to_excel(writer, index=False, sheet_name="История")
+            return output.getvalue()
 
-    # Изчисли нетна печалба
-    def calculate_profit(row):
-        if row["Статус"] == "Печели":
-            return round(row["Сума"] * (row["Коеф"] - 1), 2)
-        elif row["Статус"] == "Губи":
-            return -row["Сума"]
-        else:
-            return None
+        excel_data = to_excel(history_df)
+        st.download_button("Свали Excel файл", data=excel_data, file_name="istoriya_zalozi.xlsx")
+    else:
+        st.info("Няма още заложени мачове.")
 
-    edited_df["Печалба"] = edited_df.apply(calculate_profit, axis=1)
+# === ТАБ 3: Графики ===
+with tabs[2]:
+    st.header("Графика на печалбата")
+    if st.session_state["history"]:
+        history_df = pd.DataFrame(st.session_state["history"])
+        history_df["Натрупана печалба"] = history_df["Печалба"].cumsum()
+        history_df["Дата"] = pd.to_datetime(history_df["Дата"])
 
-    # Обновяване на историята
-    st.session_state.history = edited_df.to_dict(orient="records")
+        fig, ax = plt.subplots()
+        ax.plot(history_df["Дата"], history_df["Натрупана печалба"], marker="o", linestyle="-", color="green")
+        ax.set_title("Натрупана печалба във времето")
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Печалба (лв)")
+        plt.xticks(rotation=45)
+        st.pyplot(fig)
+    else:
+        st.info("Няма данни за показване.")
 
-    # Обща статистика
-    total_bets = len(edited_df)
-    won = (edited_df["Статус"] == "Печели").sum()
-    lost = (edited_df["Статус"] == "Губи").sum()
-    pending = (edited_df["Статус"] == "Отворен").sum()
-    profit = edited_df["Печалба"].dropna().sum()
-    roi = round(100 * profit / edited_df["Сума"].sum(), 2) if edited_df["Сума"].sum() > 0 else 0
-
-    st.markdown(f"""
-    **Общо залози:** {total_bets}  
-    **Печеливши:** {won}  
-    **Губещи:** {lost}  
-    **Активни:** {pending}  
-    **Нетна печалба:** {profit:.2f} лв  
-    **ROI:** {roi:.2f} %
-    """)
-
-    # Експорт в Excel
-    def to_excel(df):
-        output = io.BytesIO()
-        df.to_excel(output, index=False)
-        return output.getvalue()
-
-    excel_data = to_excel(edited_df)
-    st.download_button("Изтегли историята като Excel", data=excel_data, file_name="value_bets_history.xlsx")
-
-else:
-    st.info("Все още няма добавени залози.")
+# === ТАБ 4: Настройки ===
+with tabs[3]:
+    st.header("Настройки на системата")
+    new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
+    if st.button("Запази"):
+        st.session_state["balance"] = new_balance
+        st.success("Новата банка е запазена!")
+        st.rerun()  # Актуализира изгледа
