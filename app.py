@@ -8,8 +8,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 import joblib
 import os
+import requests
 
-st.set_page_config(page_title="Value Bets with ML", layout="wide")
+st.set_page_config(page_title="Value Bets with ML and Real Matches", layout="wide")
 
 # --- Функция за обучение на модела ---
 def train_model(df):
@@ -39,8 +40,8 @@ def load_model():
         return model, le
     return None, None
 
-# --- Генериране на прогнози ---
-def generate_ml_bets(model, le, n=20):
+# --- Генериране на ML прогнози ---
+def generate_ml_bets(model, le, n=40):
     leagues = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga']
     markets = ['1X2', 'Over/Under 2.5', 'Both Teams to Score']
     teams = ['Team A', 'Team B', 'Team C', 'Team D']
@@ -87,9 +88,45 @@ def generate_ml_bets(model, le, n=20):
     df = pd.DataFrame(rows)
     return df[df['Value %'] > 0].sort_values(by='Value %', ascending=False).reset_index(drop=True)
 
-# --- UI ---
-st.title("Value Bets с Машинно Обучение")
+# --- Зареждане на реални предстоящи мачове от API-Football ---
+API_KEY = 'ТУК_ВЪВЕДИ_СВОЯ_API_КЛЮЧ'
 
+def fetch_upcoming_matches(league_id=39, season=2025, date=None):
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {
+        "x-rapidapi-key": API_KEY,
+        "x-rapidapi-host": "v3.football.api-sports.io"
+    }
+    params = {
+        "league": league_id,
+        "season": season,
+    }
+    if date:
+        params["date"] = date  # формат YYYY-MM-DD
+
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+
+    matches = []
+    if data.get('results', 0) > 0:
+        for fixture in data['response']:
+            matches.append({
+                'Дата': fixture['fixture']['date'][:10],
+                'Отбор 1': fixture['teams']['home']['name'],
+                'Отбор 2': fixture['teams']['away']['name'],
+                'Лига': fixture['league']['name'],
+                'Стадион': fixture['fixture']['venue']['name'] if fixture['fixture']['venue'] else 'Неизвестен',
+            })
+    else:
+        st.warning("Няма налични мачове за избраната лига и дата.")
+
+    return pd.DataFrame(matches)
+
+# --- UI ---
+
+st.title("Value Bets с Машинно Обучение и Реални Мачове")
+
+# Upload CSV files and train model
 uploaded_files = st.file_uploader("Качи един или повече CSV файла с футболни данни", type=["csv"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -119,21 +156,21 @@ model, le = load_model()
 if model is None or le is None:
     st.warning("Моделът не е зареден. Качи и обучи нови данни.")
 
-# Настройки
+# Филтри за препоръчани залози
 col1, col2 = st.columns(2)
 with col1:
     min_value = st.slider("Минимален Value %", 0.0, 20.0, 4.0, step=0.5)
 with col2:
     max_rows = st.slider("Макс. брой прогнози", 5, 50, 15)
 
-# Генериране прогнози
+# Генериране и показване на ML залози
 bets_df = generate_ml_bets(model, le, n=40)
 filtered_df = bets_df[bets_df['Value %'] >= min_value].head(max_rows)
 
 st.subheader("Препоръчани залози")
 st.dataframe(filtered_df, use_container_width=True)
 
-# История
+# История на залозите
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame()
 
@@ -143,3 +180,25 @@ if st.button("Добави всички към история"):
 if not st.session_state.history.empty:
     st.subheader("История на залозите")
     st.dataframe(st.session_state.history.reset_index(drop=True), use_container_width=True)
+
+# Реални предстоящи мачове
+st.header("Реални предстоящи мачове от API-Football")
+
+league = st.selectbox("Избери лига", options=[
+    (39, "Premier League"),
+    (140, "La Liga"),
+    (135, "Serie A"),
+    (78, "Bundesliga")
+], format_func=lambda x: x[1])
+
+selected_league_id = league[0]
+
+season = st.number_input("Сезон", min_value=2000, max_value=2100, value=2025)
+
+date = st.date_input("Дата за мачовете (остави по подразбиране, за да видиш всички)")
+
+if st.button("Зареди мачове"):
+    date_str = date.strftime("%Y-%m-%d") if date else None
+    matches_df = fetch_upcoming_matches(selected_league_id, season, date_str)
+    if not matches_df.empty:
+        st.dataframe(matches_df)
