@@ -1,46 +1,41 @@
+# train_model.py
+
 import pandas as pd
-import random
 import joblib
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
 
-# Стъпка 1: Генерираме симулирани данни
-leagues = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga']
-markets = ['1X2', 'Over/Under 2.5', 'Both Teams to Score']
-picks = ['1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Yes', 'No']
+# Зареждане на данни
+df = pd.read_csv("matches.csv")
 
-data = []
-for _ in range(1000):
-    league = random.choice(leagues)
-    market = random.choice(markets)
-    pick = random.choice(picks)
-    odds = round(random.uniform(1.5, 3.5), 2)
-    value = round(random.uniform(1.0, 20.0), 2)
-    shots = random.randint(-10, 10)         # Преимущество в удари
-    possession = random.randint(-50, 50)    # Преимущество във владеене на топката
-    outcome = int(random.random() < 0.5)    # 1 = успешен залог, 0 = неуспешен
+# Филтриране на необходими колони
+df = df[['league', 'team1', 'team2', 'market', 'pick', 'odds', 'result']]
 
-    data.append([league, market, pick, odds, value, shots, possession, outcome])
+# Премахване на редове с липсващи стойности
+df = df.dropna()
 
-df = pd.DataFrame(data, columns=[
-    'Лига', 'Пазар', 'Залог', 'Odds', 'Value %', 'Удари', 'Притежание', 'Успех'
-])
+# Енкодиране на категорийни стойности
+le = LabelEncoder()
+for col in ['league', 'team1', 'team2', 'market', 'pick']:
+    df[col] = le.fit_transform(df[col].astype(str))
 
-# Стъпка 2: Енкодиране на категориални колони
-label_encoders = {}
-for col in ['Лига', 'Пазар', 'Залог']:
-    le = LabelEncoder()
-    df[col] = le.fit_transform(df[col])
-    label_encoders[col] = le
+# Целева променлива: 1 ако залогът е спечелен, 0 иначе
+df['target'] = df['result'].apply(lambda x: 1 if x == 'win' else 0)
 
-# Стъпка 3: Обучение на модел
-X = df.drop(columns='Успех')
-y = df['Успех']
+# Функции и цел
+X = df[['league', 'team1', 'team2', 'market', 'pick', 'odds']]
+y = df['target']
 
+# Разделяне на обучаващи и тестови данни
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Създаване и обучение на модела
 model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X, y)
+model.fit(X_train, y_train)
 
-# Стъпка 4: Запазване на модела и енкодерите във файлове
+# Запазване на модела и енкодера
 joblib.dump(model, 'value_bet_model.pkl')
-joblib.dump(label_encoders, 'label_encoders.pkl')
-print("Файловете са запазени успешно.")
+joblib.dump(le, 'label_encoder.pkl')
+
+print("✅ Обучението завърши и моделите са запазени.")
