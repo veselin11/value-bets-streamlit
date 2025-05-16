@@ -39,7 +39,7 @@ with tabs[0]:
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
 
-            suggested_bet = round(st.session_state["balance"] * 0.05, -1)  # 5% от банката, закръглено
+            suggested_bet = round(st.session_state["balance"] * 0.05, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
@@ -58,39 +58,50 @@ with tabs[1]:
     st.header("История на залозите")
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
-        st.dataframe(history_df, use_container_width=True)
 
-        total_bets = len(history_df)
+        updated_statuses = []
+        for idx, row in history_df.iterrows():
+            cols = st.columns([3, 1.5, 1.2, 1.2, 1.5, 2.5, 1.8])
+            cols[0].write(row["Мач"])
+            cols[1].write(row["Пазар"])
+            cols[2].write(f"{row['Коефициент']:.2f}")
+            cols[3].write(f"{row['Сума']:.2f} лв")
+            cols[4].write(f"{row['Дата']}")
+            cols[5].write(f"{row['Печалба']:.2f} лв")
+
+            new_status = cols[6].selectbox(
+                "Статус", ["Предстои", "Печели", "Губи"],
+                index=["Предстои", "Печели", "Губи"].index(row["Статус"]),
+                key=f"status_{idx}"
+            )
+            updated_statuses.append(new_status)
+
+        # Обновяване на статусите
+        for i, status in enumerate(updated_statuses):
+            st.session_state["history"][i]["Статус"] = status
+
+        # Статистика
+        resolved_bets = [b for b in st.session_state["history"] if b["Статус"] in ["Печели", "Губи"]]
+        total_bets = len(st.session_state["history"])
         total_staked = sum(b["Сума"] for b in st.session_state["history"])
-        total_profit = sum(b["Печалба"] for b in st.session_state["history"] if b["Статус"] == "Печели")
-        roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
+        total_profit = sum(b["Печалба"] if b["Статус"] == "Печели" else 0 for b in resolved_bets)
+        total_loss = sum(b["Сума"] for b in resolved_bets if b["Статус"] == "Губи")
+        net_profit = total_profit - total_loss
+        roi = (net_profit / total_staked) * 100 if total_staked > 0 else 0
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Залози", total_bets)
-        col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
+        col2.metric("Нетна печалба", f"{net_profit:.2f} лв")
         col3.metric("ROI", f"{roi:.2f}%")
 
-        st.subheader("Обнови статус на залог")
-        for i, bet in enumerate(st.session_state["history"]):
-            if bet["Статус"] == "Предстои":
-                col1, col2 = st.columns([4, 2])
-                col1.write(f"{bet['Мач']} – {bet['Пазар']}")
-                new_status = col2.selectbox("Статус", ["-", "Печели", "Губи"], key=f"status_{i}")
-                if new_status == "Печели":
-                    st.session_state["history"][i]["Статус"] = "Печели"
-                elif new_status == "Губи":
-                    st.session_state["history"][i]["Статус"] = "Губи"
-                    st.session_state["history"][i]["Печалба"] = -bet["Сума"]
-
-        # Експорт в Excel
+        # Експорт
         def to_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="История")
             return output.getvalue()
 
-        excel_data = to_excel(pd.DataFrame(st.session_state["history"]))
-        st.download_button("Свали Excel файл", data=excel_data, file_name="istoriya_zalozi.xlsx")
+        st.download_button("Свали Excel файл", data=to_excel(pd.DataFrame(st.session_state["history"])), file_name="istoriya_zalozi.xlsx")
     else:
         st.info("Няма още заложени мачове.")
 
@@ -98,21 +109,19 @@ with tabs[1]:
 with tabs[2]:
     st.header("Графика на печалбата")
     if st.session_state["history"]:
-        history_df = pd.DataFrame(st.session_state["history"])
-        history_df = history_df[history_df["Статус"] != "Предстои"]
-        if not history_df.empty:
-            history_df["Натрупана печалба"] = history_df["Печалба"].cumsum()
-            history_df["Дата"] = pd.to_datetime(history_df["Дата"])
+        df = pd.DataFrame(st.session_state["history"])
+        df = df[df["Статус"] != "Предстои"]
+        df["Нетна печалба"] = df.apply(lambda x: x["Печалба"] if x["Статус"] == "Печели" else -x["Сума"], axis=1)
+        df["Натрупана печалба"] = df["Нетна печалба"].cumsum()
+        df["Дата"] = pd.to_datetime(df["Дата"])
 
-            fig, ax = plt.subplots()
-            ax.plot(history_df["Дата"], history_df["Натрупана печалба"], marker="o", linestyle="-", color="green")
-            ax.set_title("Натрупана печалба във времето")
-            ax.set_xlabel("Дата")
-            ax.set_ylabel("Печалба (лв)")
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-        else:
-            st.info("Няма финализирани залози за графиката.")
+        fig, ax = plt.subplots()
+        ax.plot(df["Дата"], df["Натрупана печалба"], marker="o", linestyle="-", color="green")
+        ax.set_title("Натрупана печалба във времето")
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Печалба (лв)")
+        plt.xticks(rotation=45)
+        st.pyplot(fig)
     else:
         st.info("Няма данни за показване.")
 
