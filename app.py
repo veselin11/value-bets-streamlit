@@ -1,58 +1,52 @@
 import streamlit as st
-from datetime import datetime
 import pandas as pd
+import datetime
 import io
-import matplotlib.pyplot as plt
 
-# --- Конфигурация ---
-st.set_page_config(page_title="Стойностни залози", layout="wide")
+# Конфигурация на страницата
+st.set_page_config(page_title="Value Betting Tracker", layout="wide")
 
-# --- Сесия ---
+# Инициализиране на сесията
 if "history" not in st.session_state:
     st.session_state["history"] = []
 
-if "balance" not in st.session_state:
-    st.session_state["balance"] = 500
-
-if "stake_percent" not in st.session_state:
-    st.session_state["stake_percent"] = 5  # % от банката
-
-# --- Примерни мачове ---
-value_bets = [
-    {"Мач": "Arsenal vs Chelsea", "Пазар": "1", "Коефициент": 2.2, "Value %": 6.5, "Начален час": "21:00"},
-    {"Мач": "Real Madrid vs Barcelona", "Пазар": "ГГ", "Коефициент": 1.9, "Value %": 8.1, "Начален час": "22:00"},
-    {"Мач": "Bayern vs Dortmund", "Пазар": "Над 2.5", "Коефициент": 2.05, "Value %": 7.2, "Начален час": "19:30"},
-]
-
-tabs = st.tabs(["Прогнози", "История", "Графики", "Настройки"])
+# Навигация
+tabs = st.tabs(["Прогнози", "История", "Статистика"])
 
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
-    st.title("Стойностни залози – Симулирани данни")
-    df = pd.DataFrame(value_bets)
+    st.header("Днешни стойностни прогнози")
 
-    for i, row in df.iterrows():
-        with st.container(border=True):
-            col1, col2, col3, col4, col5, col6 = st.columns([3, 1.5, 1.2, 1.2, 1.2, 2])
-            col1.markdown(f"**{row['Мач']}**")
-            col2.write(row["Пазар"])
-            col3.write(f"{row['Коефициент']:.2f}")
-            col4.write(f"{row['Value %']}%")
-            col5.write(row["Начален час"])
+    example_predictions = [
+        {"Мач": "Ливърпул - Челси", "Пазар": "1X2 - Победа Ливърпул", "Коефициент": 2.10, "Value %": 12.5},
+        {"Мач": "Байерн - Дортмунд", "Пазар": "Голове Над 2.5", "Коефициент": 1.80, "Value %": 9.1},
+        {"Мач": "Ювентус - Милан", "Пазар": "Двоен шанс Х2", "Коефициент": 2.30, "Value %": 11.0},
+    ]
 
-            suggested_bet = round(st.session_state["balance"] * st.session_state["stake_percent"] / 100, -1)
-            if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
-                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
-                st.session_state["history"].append({
-                    "Мач": row["Мач"],
-                    "Пазар": row["Пазар"],
-                    "Коефициент": row["Коефициент"],
-                    "Сума": suggested_bet,
-                    "Печалба": profit,
-                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Статус": "Предстои"
-                })
-                st.success(f"Заложено {suggested_bet} лв на {row['Мач']} – {row['Пазар']}")
+    df_preds = pd.DataFrame(example_predictions)
+    st.dataframe(df_preds, use_container_width=True)
+
+    st.markdown("### Добави залог към историята")
+    with st.form("add_bet_form"):
+        col1, col2, col3 = st.columns(3)
+        match = col1.selectbox("Мач", [p["Мач"] for p in example_predictions])
+        market = col2.text_input("Пазар", value="1X2 - Победа")
+        odds = col3.number_input("Коефициент", value=2.00, step=0.01)
+        stake = st.number_input("Сума на залога (лв)", value=10, step=1)
+        date = st.date_input("Дата", value=datetime.date.today())
+
+        submitted = st.form_submit_button("Добави")
+        if submitted:
+            st.session_state["history"].append({
+                "Мач": match,
+                "Пазар": market,
+                "Коефициент": odds,
+                "Сума": stake,
+                "Печалба": 0.00,
+                "Дата": date.strftime("%Y-%m-%d"),
+                "Статус": "-"
+            })
+            st.success("Залогът е добавен!")
 
 # === ТАБ 2: История ===
 with tabs[1]:
@@ -60,25 +54,31 @@ with tabs[1]:
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
 
-        # Добавяне на падащи менюта за резултат
+        st.write("Маркирай изхода на мачовете директно в таблицата:")
+
         for i in range(len(history_df)):
-            if history_df.at[i, "Статус"] == "Предстои":
-                result = st.selectbox(
-                    f"Резултат: {history_df.at[i, 'Мач']} ({history_df.at[i, 'Пазар']})",
-                    options=["-", "Печели", "Губи"],
-                    key=f"result_{i}"
-                )
-                if result == "Печели":
-                    history_df.at[i, "Статус"] = "Печели"
-                    history_df.at[i, "Печалба"] = round((history_df.at[i, "Коефициент"] - 1) * history_df.at[i, "Сума"], 2)
-                elif result == "Губи":
-                    history_df.at[i, "Статус"] = "Губи"
-                    history_df.at[i, "Печалба"] = -history_df.at[i, "Сума"]
+            cols = st.columns([3, 1.5, 1.2, 1.2, 1.2, 1.5, 2])
+            cols[0].write(history_df.at[i, "Мач"])
+            cols[1].write(history_df.at[i, "Пазар"])
+            cols[2].write(f"{history_df.at[i, 'Коефициент']:.2f}")
+            cols[3].write(f"{history_df.at[i, 'Сума']:.0f} лв")
+            cols[4].write(f"{history_df.at[i, 'Печалба']:.2f} лв")
+            cols[5].write(history_df.at[i, "Дата"])
 
-        # Запазване на актуализирана история
+            new_status = cols[6].selectbox(
+                "", ["-", "Печели", "Губи"],
+                index=["-", "Печели", "Губи"].index(history_df.at[i, "Статус"]) if history_df.at[i, "Статус"] in ["Печели", "Губи"] else 0,
+                key=f"inline_result_{i}"
+            )
+
+            if new_status == "Печели" and history_df.at[i, "Статус"] != "Печели":
+                history_df.at[i, "Статус"] = "Печели"
+                history_df.at[i, "Печалба"] = round((history_df.at[i, "Коефициент"] - 1) * history_df.at[i, "Сума"], 2)
+            elif new_status == "Губи" and history_df.at[i, "Статус"] != "Губи":
+                history_df.at[i, "Статус"] = "Губи"
+                history_df.at[i, "Печалба"] = -history_df.at[i, "Сума"]
+
         st.session_state["history"] = history_df.to_dict("records")
-
-        st.dataframe(history_df, use_container_width=True)
 
         total_bets = len(history_df)
         total_staked = sum(b["Сума"] for b in st.session_state["history"])
@@ -101,43 +101,7 @@ with tabs[1]:
     else:
         st.info("Няма още заложени мачове.")
 
-# === ТАБ 3: Графики ===
+# === ТАБ 3: Статистика (предстояща функция) ===
 with tabs[2]:
-    st.header("Графика на печалбата")
-    if st.session_state["history"]:
-        history_df = pd.DataFrame(st.session_state["history"])
-        history_df["Дата"] = pd.to_datetime(history_df["Дата"])
-        history_df = history_df.sort_values("Дата")
-        history_df["Натрупана печалба"] = history_df["Печалба"].cumsum()
-
-        fig, ax = plt.subplots()
-        ax.plot(history_df["Дата"], history_df["Натрупана печалба"], marker="o", linestyle="-",
-                color="green" if history_df["Натрупана печалба"].iloc[-1] >= 0 else "red")
-        ax.set_title("Натрупана печалба във времето")
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Печалба (лв)")
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
-    else:
-        st.info("Няма данни за показване.")
-
-# === ТАБ 4: Настройки ===
-with tabs[3]:
-    st.header("Настройки на системата")
-
-    new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
-    stake_percent = st.slider("Процент от банката за залог", min_value=1, max_value=20, value=st.session_state["stake_percent"], step=1)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Запази"):
-            st.session_state["balance"] = new_balance
-            st.session_state["stake_percent"] = stake_percent
-            st.success("Настройките са запазени.")
-            st.rerun()
-
-    with col2:
-        if st.button("Изчисти историята"):
-            st.session_state["history"] = []
-            st.success("Историята е изчистена!")
-            st.rerun()
+    st.header("Обобщена статистика (в разработка)")
+    st.info("Скоро ще бъде добавен графичен анализ по дни, филтри, пазари и други.")
