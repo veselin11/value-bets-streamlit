@@ -1,4 +1,8 @@
 streamlit
-requests
-pytz
+pandas
 matplotlib
+XlsxWriter
+scikit-learn
+requests
+numpy
+seaborn
