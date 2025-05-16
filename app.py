@@ -1,6 +1,8 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
@@ -36,14 +38,14 @@ with tabs[0]:
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
 
-            suggested_bet = round(st.session_state["balance"] * 0.05, -1)  # 5% от банката, закръглено
+            suggested_bet = round(st.session_state["balance"] * 0.05, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 st.session_state["history"].append({
                     "Мач": row["Мач"],
                     "Пазар": row["Пазар"],
                     "Коефициент": row["Коефициент"],
                     "Сума": suggested_bet,
-                    "Печалба": 0.0,  # ще се изчисли след резултат
+                    "Печалба": 0.0,
                     "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Статус": "Предстои"
                 })
@@ -87,6 +89,35 @@ with tabs[1]:
         col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
         col3.metric("ROI", f"{roi:.2f}%")
         col4.metric("Текуща банка", f"{st.session_state['balance']:.2f} лв")
+
+        # --- Графика на печалбата във времето ---
+        df_profit = pd.DataFrame(st.session_state["history"])
+        df_profit["Баланс"] = 500 + df_profit["Печалба"].cumsum()
+        df_profit["Дата"] = pd.to_datetime(df_profit["Дата"])
+        df_profit = df_profit.sort_values("Дата")
+
+        st.subheader("Графика на растежа на банката")
+        fig, ax = plt.subplots()
+        ax.plot(df_profit["Дата"], df_profit["Баланс"], marker='o')
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Баланс (лв)")
+        ax.grid(True)
+        st.pyplot(fig)
+
+        # --- Експорт на Excel ---
+        def to_excel(df):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df.to_excel(writer, index=False, sheet_name="История")
+            return output.getvalue()
+
+        excel_data = to_excel(history_df)
+        st.download_button(
+            label="Свали като Excel файл",
+            data=excel_data,
+            file_name="istoria_zalozi.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.info("Няма още заложени мачове.")
 
@@ -97,3 +128,4 @@ with tabs[2]:
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
         st.success("Новата банка е запазена.")
+        
