@@ -1,7 +1,6 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
-import altair as alt
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
@@ -19,7 +18,7 @@ value_bets = [
     {"Мач": "Bayern vs Dortmund", "Пазар": "Над 2.5", "Коефициент": 2.05, "Value %": 7.2, "Начален час": "19:30"},
 ]
 
-tabs = st.tabs(["Прогнози", "История", "Настройки", "Статистика"])
+tabs = st.tabs(["Прогнози", "История", "Настройки"])
 
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
@@ -37,7 +36,7 @@ with tabs[0]:
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
 
-            suggested_bet = round(st.session_state["balance"] * 0.05, -1)
+            suggested_bet = round(st.session_state["balance"] * 0.05, -1)  # 5% от банката, закръглено
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
                 st.session_state["history"].append({
@@ -54,19 +53,41 @@ with tabs[0]:
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залозите")
+
     if st.session_state["history"]:
+        for i, bet in enumerate(st.session_state["history"]):
+            with st.container(border=True):
+                cols = st.columns([3, 1, 1.2, 1.2, 1.5, 2, 1.2])
+                cols[0].markdown(f"**{bet['Мач']}**")
+                cols[1].write(bet["Пазар"])
+                cols[2].write(f"{bet['Коефициент']:.2f}")
+                cols[3].write(f"{bet['Сума']} лв")
+                cols[4].write(f"{bet['Печалба']} лв")
+                cols[5].write(bet["Дата"])
+                if cols[6].button("Изтрий", key=f"delete_{i}"):
+                    st.session_state["history"].pop(i)
+                    st.experimental_rerun()
+
         history_df = pd.DataFrame(st.session_state["history"])
-        st.dataframe(history_df, use_container_width=True)
+        if not history_df.empty:
+            total_bets = len(history_df)
+            total_staked = history_df["Сума"].sum()
+            total_profit = history_df["Печалба"].sum()
+            roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
 
-        total_bets = len(history_df)
-        total_staked = sum(b["Сума"] for b in st.session_state["history"])
-        total_profit = sum(b["Печалба"] for b in st.session_state["history"])
-        roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Залози", total_bets)
+            col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
+            col3.metric("ROI", f"{roi:.2f}%")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Залози", total_bets)
-        col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
-        col3.metric("ROI", f"{roi:.2f}%")
+            # Експорт в CSV
+            csv = history_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="⬇️ Експортирай историята (CSV)",
+                data=csv,
+                file_name="istoriya_zalozi.csv",
+                mime="text/csv"
+            )
     else:
         st.info("Няма още заложени мачове.")
 
@@ -77,47 +98,3 @@ with tabs[2]:
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
         st.success("Новата банка е запазена.")
-
-# === ТАБ 4: Статистика ===
-with tabs[3]:
-    st.header("Статистика")
-    if st.session_state["history"]:
-        df = pd.DataFrame(st.session_state["history"])
-        df["Дата"] = pd.to_datetime(df["Дата"])
-
-        # Успеваемост (базирано на положителна печалба)
-        wins = df[df["Печалба"] > 0]
-        success_rate = len(wins) / len(df) * 100
-
-        # Среден value (ако има такива данни)
-        avg_value = df["Коефициент"].mean() if not df.empty else 0
-
-        col1, col2 = st.columns(2)
-        col1.metric("Успеваемост", f"{success_rate:.2f}%")
-        col2.metric("Среден коефициент", f"{avg_value:.2f}")
-
-        # Печалба по дни
-        profit_by_day = df.groupby(df["Дата"].dt.date)["Печалба"].sum().reset_index()
-        profit_by_day.columns = ["Дата", "Печалба"]
-
-        chart = alt.Chart(profit_by_day).mark_bar().encode(
-            x="Дата:T",
-            y="Печалба:Q",
-            tooltip=["Дата", "Печалба"]
-        ).properties(title="Нетна печалба по дни", height=300)
-
-        st.altair_chart(chart, use_container_width=True)
-
-        # Графика на банката по дни
-        profit_by_day = profit_by_day.sort_values("Дата")
-        profit_by_day["Банка"] = st.session_state["balance"] + profit_by_day["Печалба"].cumsum()
-
-        balance_chart = alt.Chart(profit_by_day).mark_line(point=True).encode(
-            x="Дата:T",
-            y=alt.Y("Банка:Q", title="Банка (лв)"),
-            tooltip=["Дата", "Банка"]
-        ).properties(title="Растеж на банката по дни", height=300)
-
-        st.altair_chart(balance_chart, use_container_width=True)
-    else:
-        st.info("Няма достатъчно данни за статистика.")
