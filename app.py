@@ -1,81 +1,70 @@
-import streamlit as st 
-import pandas as pd from datetime 
+import streamlit as st
+import pandas as pd
 import datetime
 
-st.set_page_config(page_title="Value Bets", layout="wide") st.title("Value Bets Приложение")
+st.set_page_config(page_title="Value Bets Tracker", layout="wide")
 
-Инициализация на състояние
+# Заглавие
+st.title("История на залозите")
 
-if "history" not in st.session_state: st.session_state["history"] = [] if "bank" not in st.session_state: st.session_state["bank"] = 500.0
+# Dummy база за история (в реалното приложение се зарежда от база или файл)
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-Табове: Прогнози | История | Статистика
-
-tabs = st.tabs(["Прогнози", "История", "Статистика"])
-
-=================== ТАБ 1: ПРОГНОЗИ ===================
-
-with tabs[0]: st.subheader("Днешни стойностни прогнози") # Примерни прогнози (замени с реални) predictions = [ {"Мач": "Барселона - Реал Мадрид", "Коефициент": 2.5, "Вероятност": 0.55, "Стойност": 37, "Час": "22:00", "Пазар": "1X2", "Прогноза": "1"}, {"Мач": "Милан - Интер", "Коефициент": 3.2, "Вероятност": 0.4, "Стойност": 28, "Час": "21:45", "Пазар": "1X2", "Прогноза": "2"}, {"Мач": "Ливърпул - Ман Сити", "Коефициент": 1.9, "Вероятност": 0.6, "Стойност": 14, "Час": "20:00", "Пазар": "1X2", "Прогноза": "1"} ] df = pd.DataFrame(predictions)
-
-for i, row in df.iterrows():
-    col1, col2 = st.columns([4, 1])
+# Форма за добавяне на нов запис
+with st.expander("Добави нов залог"):
+    col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**{row['Мач']}**  ")
-        st.markdown(f"Пазар: {row['Пазар']}  ")
-        st.markdown(f"Прогноза: {row['Прогноза']}  ")
-        st.markdown(f"Час: {row['Час']}")
+        date = st.date_input("Дата", datetime.date.today())
+        bet_type = st.selectbox("Тип залог", ["1", "X", "2", "Over", "Under", "Asian Handicap"])
+        stake = st.number_input("Залог (лв)", min_value=1.0, step=1.0)
     with col2:
-        st.markdown(f"Коеф: **{row['Коефициент']}**")
-        st.markdown(f"Вер: **{int(row['Вероятност']*100)}%**")
-        st.markdown(f"Value: **{row['Стойност']}%**")
-        if st.button(f"Залагай #{i+1}"):
-            залог = round(st.session_state.bank * 0.05, 2)
-            st.session_state.bank -= залог
-            st.session_state.history.append({
-                "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "Мач": row['Мач'],
-                "Прогноза": row['Прогноза'],
-                "Коефициент": row['Коефициент'],
-                "Залог": залог,
-                "Статус": "Предстои",
-                "Печалба": 0.0
-            })
+        match = st.text_input("Мач")
+        odds = st.number_input("Коефициент", min_value=1.01, step=0.01)
+        result = st.selectbox("Резултат", ["Чака се", "Спечелен", "Загубен"])
 
-=================== ТАБ 2: ИСТОРИЯ ===================
+    if st.button("Добави залог"):
+        st.session_state.history.append({
+            "Дата": date.strftime("%Y-%m-%d"),
+            "Мач": match,
+            "Тип": bet_type,
+            "Коефициент": odds,
+            "Залог": stake,
+            "Резултат": result
+        })
+        st.success("Залогът е добавен успешно.")
 
-with tabs[1]: st.subheader("История на залозите")
-
-if len(st.session_state.history) == 0:
-    st.info("Все още няма направени залози.")
-else:
+# Преобразуване в DataFrame
+if st.session_state.history:
     df = pd.DataFrame(st.session_state.history)
 
-    # Филтри
-    st.markdown("### Таблица с филтри")
-    selected_status = st.multiselect("Статус", ["Предстои", "Печели", "Губи"], default=["Предстои", "Печели", "Губи"])
-    filtered_df = df[df["Статус"].isin(selected_status)]
+    # Изчисляване на печалба
+    def calc_profit(row):
+        if row["Резултат"] == "Спечелен":
+            return round(row["Залог"] * (row["Коефициент"] - 1), 2)
+        elif row["Резултат"] == "Загубен":
+            return -row["Залог"]
+        return 0.0
 
-    sort_by = st.selectbox("Сортирай по", ["Дата", "Печалба", "Коефициент"])
-    filtered_df = filtered_df.sort_values(sort_by, ascending=False)
+    df["Печалба (лв)"] = df.apply(calc_profit, axis=1)
 
-    st.dataframe(filtered_df.reset_index(drop=True), use_container_width=True)
+    # Обща статистика
+    total_bets = len(df)
+    won_bets = df[df["Резултат"] == "Спечелен"].shape[0]
+    lost_bets = df[df["Резултат"] == "Загубен"].shape[0]
+    waiting = df[df["Резултат"] == "Чака се"].shape[0]
+    total_profit = df["Печалба (лв)"].sum()
+    roi = (total_profit / df["Залог"].sum()) * 100 if df["Залог"].sum() > 0 else 0
 
-=================== ТАБ 3: СТАТИСТИКА ===================
+    st.subheader("Статистика")
+    st.markdown(f"**Общо залози:** {total_bets}")
+    st.markdown(f"**Спечелени:** {won_bets} | Загубени: {lost_bets} | Чака се: {waiting}")
+    st.markdown(f"**Обща печалба:** {total_profit:.2f} лв")
+    st.markdown(f"**ROI:** {roi:.2f}%")
 
-with tabs[2]: st.subheader("Статистика") df = pd.DataFrame(st.session_state.history) if df.empty: st.warning("Няма данни за статистика.") else: общо = len(df) спечелени = len(df[df["Статус"] == "Печели"]) загубени = len(df[df["Статус"] == "Губи"]) предстоящи = len(df[df["Статус"] == "Предстои"]) печалба = df["Печалба"].sum() roi = (печалба / df["Залог"].sum()) * 100 if df["Залог"].sum() > 0 else 0
+    st.subheader("История")
+    st.dataframe(df, use_container_width=True)
 
-col1, col2, col3 = st.columns(3)
-    col1.metric("Общо залози", общо)
-    col2.metric("Печалба (лв)", f"{печалба:.2f}")
-    col3.metric("ROI", f"{roi:.1f}%")
-
-    col4, col5, col6 = st.columns(3)
-    col4.metric("Спечелени", спечелени)
-    col5.metric("Загубени", загубени)
-    col6.metric("Предстои", предстоящи)
-
-=================== КОНТРОЛИ В ДОЛНАТА ЧАСТ ===================
-
-st.sidebar.header("Настройки") ново_начало = st.sidebar.button("Изчисти всичко") if ново_начало: st.session_state.history = [] st.session_state.bank = 500.0
-
-st.sidebar.markdown(f"Текуща банка: {st.session_state.bank:.2f} лв")
-
+else:
+    st.info("Няма въведени залози все още.")
+    
