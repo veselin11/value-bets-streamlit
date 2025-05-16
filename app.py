@@ -1,167 +1,106 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import matplotlib.pyplot as plt
-import io
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-# === Сесийна инициализация ===
+st.set_page_config(layout="wide")
+
+# Инициализация
 if "history" not in st.session_state:
     st.session_state["history"] = []
-if "balance" not in st.session_state:
-    st.session_state["balance"] = 500.0
 
-# === Примерни прогнози ===
-value_bets = [
-    {"Мач": "Барселона - Реал", "Пазар": "1Х", "Коефициент": 2.10, "Value %": 15, "Начален час": "22:00"},
-    {"Мач": "Арсенал - Челси", "Пазар": "Над 2.5", "Коефициент": 1.85, "Value %": 12, "Начален час": "21:30"},
-    {"Мач": "Байерн - Борусия", "Пазар": "Х2", "Коефициент": 3.25, "Value %": 18, "Начален час": "19:45"},
-    {"Мач": "Интер - Милан", "Пазар": "1", "Коефициент": 2.50, "Value %": 22, "Начален час": "20:00"},
-]
+# Интерфейс с табове
+tabs = st.tabs(["Прогнози", "История"])
 
-# === Функция за цветова индикация на сигурност ===
-def get_confidence_color(value_percent):
-    if value_percent >= 20:
-        return "#b2f2bb"
-    elif value_percent >= 15:
-        return "#ffe066"
-    else:
-        return "#ffa8a8"
-
-# === ТАБОВЕ ===
-tabs = st.tabs(["Прогнози", "История", "Статистика"])
-
-# === ТАБ 1: Прогнози ===
 with tabs[0]:
-    st.title("Стойностни залози – Днес")
-    st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
+    st.title("Прогнози за стойностни залози")
+    # Примерни прогнози
+    example_bets = [
+        {"Мач": "Барселона - Реал Мадрид", "Пазар": "1X2", "Избор": "1", "Коеф": 2.5, "Value %": 18.2, "Статус": ""},
+        {"Мач": "Ливърпул - Ман Сити", "Пазар": "Над/Под", "Избор": "Над 2.5", "Коеф": 1.9, "Value %": 12.6, "Статус": ""},
+        {"Мач": "Байерн - Дортмунд", "Пазар": "Хендикап", "Избор": "-1", "Коеф": 3.1, "Value %": 22.4, "Статус": ""}
+    ]
 
-    df = pd.DataFrame(value_bets)
-
-    for i, row in df.iterrows():
-        bg_color = get_confidence_color(row["Value %"])
+    for i, bet in enumerate(example_bets):
         with st.container():
-            st.markdown(
-                f"""<div style="background-color: {bg_color}; padding: 10px; border-radius: 10px; margin-bottom: 10px;">
-                    <b>{row['Мач']}</b> | Пазар: {row['Пазар']} | Коеф.: {row['Коефициент']:.2f} | Value: {row['Value %']}% | Час: {row['Начален час']}
-                </div>""",
-                unsafe_allow_html=True,
-            )
+            cols = st.columns([3, 2, 2, 1, 1])
+            cols[0].markdown(f"**{bet['Мач']}**")
+            cols[1].markdown(f"{bet['Пазар']}: {bet['Избор']}")
+            cols[2].markdown(f"Коеф: {bet['Коеф']}")
+            cols[3].markdown(f"Value: {bet['Value %']}%")
+            if cols[4].button("Залагай", key=f"bet_{i}"):
+                st.session_state["history"].append(bet)
+                st.success(f"Добавено: {bet['Мач']}")
 
-            col1, _ = st.columns([1, 4])
-            if col1.button(f"Залог {round(st.session_state['balance'] * 0.05, -1)} лв", key=f"bet_{i}"):
-                suggested_bet = round(st.session_state["balance"] * 0.05, -1)
-                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
-                st.session_state["history"].append({
-                    "Мач": row["Мач"],
-                    "Пазар": row["Пазар"],
-                    "Коефициент": row["Коефициент"],
-                    "Сума": suggested_bet,
-                    "Печалба": profit,
-                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Статус": "Предстои"
-                })
-                st.success(f"Залогът е добавен за {row['Мач']}")
-                st.rerun()
-
-# === ТАБ 2: История ===
 with tabs[1]:
     st.title("История на залозите")
 
     if st.session_state["history"]:
         df = pd.DataFrame(st.session_state["history"])
+
         df = df.reset_index().rename(columns={"index": "ID"})
+        df["Печели"] = ""
+        df["Губи"] = ""
         df["Изтрий"] = ""
 
-        delete_button_code = JsCode("""
-        function(params) {
-            return `<button style="background-color: transparent; color: red; font-weight: bold; border: none; cursor: pointer;">x</button>`;
-        }
-        """)
-
-        js_delete_func = JsCode("""
-        function deleteRow(rowIndex) {
-            const api = window.gridOptions.api;
-            const rowNode = api.getDisplayedRowAtIndex(rowIndex);
-            api.applyTransaction({ remove: [rowNode.data] });
-        }
+        # JS бутони за действия
+        action_button = lambda emoji: JsCode(f"""
+            function(params) {{
+                return `<button style=\"background-color: transparent; font-size: 18px; border: none; cursor: pointer;\">{emoji}</button>`;
+            }}
         """)
 
         gb = GridOptionsBuilder.from_dataframe(df)
-        gb.configure_default_column(resizable=True, filter=True, sortable=True)
-        gb.configure_column("Изтрий", header_name="", cellRenderer=delete_button_code, width=50)
-        gb.configure_column("Статус", editable=True, cellEditor="agSelectCellEditor",
-                            cellEditorParams={"values": ["Предстои", "Печели", "Губи"]})
+        gb.configure_default_column(resizable=True, filter=True, sortable=True, wrapText=True, autoHeight=True)
 
-        status_cell_style = JsCode("""
+        # Добавяне на визуални бутони
+        gb.configure_column("Печели", header_name="", cellRenderer=action_button("✅"), width=60)
+        gb.configure_column("Губи", header_name="", cellRenderer=action_button("❌"), width=60)
+        gb.configure_column("Изтрий", header_name="", cellRenderer=action_button("✖"), width=60)
+
+        # Стил по статус
+        row_style = JsCode("""
         function(params) {
-            if (params.value == 'Печели') {
-                return {'color': 'green', 'fontWeight': 'bold'};
-            } else if (params.value == 'Губи') {
-                return {'color': 'red', 'fontWeight': 'bold'};
+            if (params.data.Статус == 'Печели') {
+                return { 'backgroundColor': '#d3f9d8' };
+            } else if (params.data.Статус == 'Губи') {
+                return { 'backgroundColor': '#ffe3e3' };
             } else {
-                return {'color': 'gray'};
+                return { 'backgroundColor': '#f1f3f5' };
             }
         }
         """)
-        gb.configure_column("Статус", cellStyle=status_cell_style)
 
-        gb.configure_grid_options(domLayout='normal')
-        gb.configure_grid_options(onGridReady=JsCode("function(params) { window.gridOptions = params; }"))
-        gb.configure_grid_options(components={"deleteRow": js_delete_func})
+        gb.configure_grid_options(getRowStyle=row_style)
+        gb.configure_grid_options(domLayout='autoHeight', onCellClicked=JsCode("""
+            function(e) {
+                if (e.colDef.field === 'Печели') {
+                    e.node.setDataValue('Статус', 'Печели');
+                } else if (e.colDef.field === 'Губи') {
+                    e.node.setDataValue('Статус', 'Губи');
+                } else if (e.colDef.field === 'Изтрий') {
+                    const api = e.api;
+                    const row = e.node.data;
+                    api.applyTransaction({ remove: [row] });
+                }
+            }
+        """))
 
         grid_response = AgGrid(
             df,
             gridOptions=gb.build(),
             allow_unsafe_jscode=True,
-            update_mode=GridUpdateMode.NO_UPDATE,
+            update_mode=GridUpdateMode.MODEL_CHANGED,
             fit_columns_on_grid_load=True,
-            height=500,
+            height=600,
             theme="streamlit"
         )
 
-        updated_df = grid_response["data"].drop(columns=["ID", "Изтрий"])
+        # Обновяване
+        updated_df = grid_response["data"].drop(columns=["ID", "Печели", "Губи", "Изтрий"])
         st.session_state["history"] = updated_df.to_dict("records")
 
-        # === Експорт бутони ===
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-            updated_df.to_excel(writer, index=False)
-        excel_data = excel_buffer.getvalue()
-
-        st.download_button(
-            label="Изтегли като Excel",
-            data=excel_data,
-            file_name="istoriya.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        st.download_button(
-            label="Изтегли като CSV",
-            data=updated_df.to_csv(index=False),
-            file_name="istoriya.csv",
-            mime="text/csv"
-        )
-
+        st.download_button("Изтегли като Excel", data=updated_df.to_excel(index=False), file_name="istoriya.xlsx")
+        st.download_button("Изтегли като CSV", data=updated_df.to_csv(index=False), file_name="istoriya.csv")
     else:
         st.info("Няма още запазени залози.")
-
-# === ТАБ 3: Статистика ===
-with tabs[2]:
-    st.title("Обща статистика")
-    df = pd.DataFrame(st.session_state["history"])
-    if not df.empty:
-        total_bets = len(df)
-        won = df[df["Статус"] == "Печели"]
-        lost = df[df["Статус"] == "Губи"]
-
-        net_profit = won["Печалба"].sum() - lost["Сума"].sum()
-        roi = net_profit / df["Сума"].sum() * 100 if df["Сума"].sum() > 0 else 0
-
-        st.metric("Залози", total_bets)
-        st.metric("Печалба", f"{net_profit:.2f} лв")
-        st.metric("ROI", f"{roi:.2f}%")
-
-        st.line_chart(df.groupby("Дата")["Печалба"].sum().cumsum())
-    else:
-        st.info("Няма налични данни за статистика.")
+        
