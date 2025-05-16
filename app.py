@@ -11,7 +11,7 @@ import os
 
 st.set_page_config(page_title="Value Bets with ML", layout="wide")
 
-# --- Функция за обучение на модела с подаване на DataFrame ---
+# --- Функция за обучение на модела ---
 def train_model(df):
     features = df[['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']]
     target = df['FTR']  # 'H','D','A'
@@ -39,7 +39,7 @@ def load_model():
         return model, le
     return None, None
 
-# --- Функция за генериране на прогнози с ML ---
+# --- Генериране на прогнози ---
 def generate_ml_bets(model, le, n=20):
     leagues = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga']
     markets = ['1X2', 'Over/Under 2.5', 'Both Teams to Score']
@@ -87,57 +87,59 @@ def generate_ml_bets(model, le, n=20):
     df = pd.DataFrame(rows)
     return df[df['Value %'] > 0].sort_values(by='Value %', ascending=False).reset_index(drop=True)
 
-# --- Основен UI ---
-
+# --- UI ---
 st.title("Value Bets с Машинно Обучение")
 
-# Качване на CSV файл
-uploaded_file = st.file_uploader("Качи CSV с футболни данни (колони: FTHG, FTAG, B365H, B365D, B365A, FTR)", type=["csv"])
+uploaded_files = st.file_uploader("Качи един или повече CSV файла с футболни данни", type=["csv"], accept_multiple_files=True)
 
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file)
-        st.success("Данните са заредени успешно!")
-        st.write(df.head())
-        
-        if st.button("Обучи модел с качените данни"):
+if uploaded_files:
+    all_dfs = []
+    for file in uploaded_files:
+        try:
+            df = pd.read_csv(file)
+            if all(col in df.columns for col in ['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A', 'FTR']):
+                all_dfs.append(df)
+            else:
+                st.warning(f"Файлът {file.name} няма нужните колони и ще бъде пропуснат.")
+        except Exception as e:
+            st.error(f"Грешка при зареждане на {file.name}: {e}")
+
+    if all_dfs:
+        full_df = pd.concat(all_dfs, ignore_index=True)
+        st.success(f"Успешно заредени {len(all_dfs)} файла с общо {len(full_df)} записа.")
+        st.dataframe(full_df.head())
+
+        if st.button("Обучи модел с всички данни"):
             with st.spinner("Обучение на модела..."):
-                accuracy = train_model(df)
-                st.success(f"Моделът е обучен! Точност на теста: {accuracy:.2f}")
-    except Exception as e:
-        st.error(f"Грешка при зареждане на файла: {e}")
-else:
-    st.info("Моля, качете CSV файл с подходящи колони за обучение.")
+                acc = train_model(full_df)
+                st.success(f"Моделът е обучен успешно! Точност: {acc:.2f}")
 
-# Зареждане на обучен модел
+# Зареждане на модела
 model, le = load_model()
 if model is None or le is None:
-    st.warning("Моделът не е зареден. Моля, обучи модела с качените данни.")
+    st.warning("Моделът не е зареден. Качи и обучи нови данни.")
 
-# Настройки за филтриране на прогнози
+# Настройки
 col1, col2 = st.columns(2)
 with col1:
     min_value = st.slider("Минимален Value %", 0.0, 20.0, 4.0, step=0.5)
 with col2:
     max_rows = st.slider("Макс. брой прогнози", 5, 50, 15)
 
-# Генериране и филтриране на прогнози
-bets_df = generate_ml_bets(model, le, n=40) if model else pd.DataFrame()
+# Генериране прогнози
+bets_df = generate_ml_bets(model, le, n=40)
 filtered_df = bets_df[bets_df['Value %'] >= min_value].head(max_rows)
 
-if not filtered_df.empty:
-    st.subheader("Препоръчани залози")
-    st.dataframe(filtered_df, use_container_width=True)
-else:
-    st.info("Няма прогнози, отговарящи на избраните критерии или моделът не е обучен.")
+st.subheader("Препоръчани залози")
+st.dataframe(filtered_df, use_container_width=True)
 
-# Управление на историята със залозите
+# История
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame()
 
-if st.button("Добави всички препоръчани залози към историята"):
-    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates().reset_index(drop=True)
+if st.button("Добави всички към история"):
+    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates()
 
 if not st.session_state.history.empty:
     st.subheader("История на залозите")
-    st.dataframe(st.session_state.history, use_container_width=True)
+    st.dataframe(st.session_state.history.reset_index(drop=True), use_container_width=True)
