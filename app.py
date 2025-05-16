@@ -1,6 +1,7 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
+import matplotlib.pyplot as plt
 import random
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
@@ -11,38 +12,43 @@ if "history" not in st.session_state:
 if "balance" not in st.session_state:
     st.session_state["balance"] = 500.0
 
-# === Генериране на динамични стойностни прогнози ===
-def generate_value_bets(n=5):
-    teams = [("Барселона", "Реал"), ("Байерн", "Дортмунд"), ("Милан", "Интер"),
-             ("Ливърпул", "Ман Сити"), ("Ювентус", "Наполи"), ("Арсенал", "Челси")]
-    markets = ["1", "X", "2", "1X", "12", "Над 2.5", "Под 2.5", "Х2"]
-    value_bets = []
-
-    for _ in range(n):
-        team1, team2 = random.choice(teams)
-        market = random.choice(markets)
-        odd = round(random.uniform(1.6, 3.5), 2)
-        value = random.randint(10, 25)
-        time = (datetime.now() + timedelta(minutes=random.randint(30, 240))).strftime("%H:%M")
-        value_bets.append({
-            "Мач": f"{team1} - {team2}",
-            "Пазар": market,
-            "Коефициент": odd,
-            "Value %": value,
-            "Начален час": time
+# === Функция за генериране на прогнози ===
+def generate_value_bets():
+    sample_matches = [
+        ("Барселона", "Реал"), ("Арсенал", "Челси"), ("Байерн", "Борусия"),
+        ("Интер", "Милан"), ("Ювентус", "Наполи"), ("Ливърпул", "Манчестър Юн"),
+        ("ПСЖ", "Марсилия"), ("Аякс", "Фейенорд")
+    ]
+    markets = ["1", "2", "1Х", "Х2", "Над 2.5", "Под 2.5"]
+    bets = []
+    for _ in range(4):
+        home, away = random.choice(sample_matches)
+        bets.append({
+            "Мач": f"{home} - {away}",
+            "Пазар": random.choice(markets),
+            "Коефициент": round(random.uniform(1.6, 3.5), 2),
+            "Value %": random.randint(10, 25),
+            "Начален час": f"{random.randint(18, 22)}:{random.choice(['00', '15', '30', '45'])}"
         })
-    return value_bets
+    return bets
 
-value_bets = generate_value_bets()
+# === Съхраняване на прогнозите в session_state ===
+if "value_bets" not in st.session_state:
+    st.session_state["value_bets"] = generate_value_bets()
 
-# === Цветова индикация за сигурност ===
+# === Функция за обновяване на прогнозите ===
+def refresh_bets():
+    st.session_state["value_bets"] = generate_value_bets()
+    st.rerun()
+
+# === Функция за цветова индикация със semi-transparent фон ===
 def get_confidence_color(value_percent):
     if value_percent >= 20:
-        return "#b2f2bb"  # зелено
+        return "rgba(178, 242, 187, 0.4)"  # зеленикав
     elif value_percent >= 15:
-        return "#ffe066"  # жълто
+        return "rgba(255, 224, 102, 0.4)"  # жълтеникав
     else:
-        return "#ffa8a8"  # червено
+        return "rgba(255, 168, 168, 0.4)"  # червеникав
 
 # === ТАБОВЕ ===
 tabs = st.tabs(["Прогнози", "История", "Статистика"])
@@ -52,7 +58,9 @@ with tabs[0]:
     st.title("Стойностни залози – Днес")
     st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
 
-    df = pd.DataFrame(value_bets)
+    st.button("Обнови прогнозите", on_click=refresh_bets)
+
+    df = pd.DataFrame(st.session_state["value_bets"])
 
     for i, row in df.iterrows():
         bg_color = get_confidence_color(row["Value %"])
@@ -87,9 +95,9 @@ with tabs[1]:
 
     def status_color(status):
         return {
-            "Печели": "#d4edda",
-            "Губи": "#f8d7da",
-            "Предстои": "#fff3cd"
+            "Печели": "rgba(212, 237, 218, 0.6)",
+            "Губи": "rgba(248, 215, 218, 0.6)",
+            "Предстои": "rgba(255, 243, 205, 0.6)"
         }.get(status, "white")
 
     if not hist_df.empty:
