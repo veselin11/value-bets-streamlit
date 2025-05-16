@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 import pandas as pd
+import altair as alt
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
@@ -18,13 +19,11 @@ value_bets = [
     {"Мач": "Bayern vs Dortmund", "Пазар": "Над 2.5", "Коефициент": 2.05, "Value %": 7.2, "Начален час": "19:30"},
 ]
 
-tabs = st.tabs(["Прогнози", "История", "Настройки"])
+tabs = st.tabs(["Прогнози", "История", "Настройки", "Статистика"])
 
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Симулирани данни")
-    st.caption("Кликни на Сума за залог, за да запишеш мача в историята")
-
     df = pd.DataFrame(value_bets)
 
     for i, row in df.iterrows():
@@ -35,7 +34,6 @@ with tabs[0]:
             col3.write(f"{row['Коефициент']:.2f}")
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
-
             suggested_bet = round(st.session_state["balance"] * 0.05, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
@@ -45,7 +43,7 @@ with tabs[0]:
                     "Коефициент": row["Коефициент"],
                     "Сума": suggested_bet,
                     "Печалба": profit,
-                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Дата": datetime.now().strftime("%Y-%m-%d"),
                     "Статус": "Предстои"
                 })
                 st.success(f"Заложено {suggested_bet} лв на {row['Мач']} – {row['Пазар']}")
@@ -57,8 +55,7 @@ with tabs[1]:
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
 
-        # Филтър по статус
-        status_filter = st.selectbox("Филтрирай по статус", options=["Всички", "Предстои", "Печели", "Губи", "Отменен"])
+        status_filter = st.selectbox("Филтрирай по статус", ["Всички", "Предстои", "Печели", "Губи", "Отменен"])
         if status_filter != "Всички":
             history_df = history_df[history_df["Статус"] == status_filter]
 
@@ -81,8 +78,6 @@ with tabs[1]:
                             profit = -row["Сума"]
                         else:
                             profit = 0.0
-
-                        # Обновяване в сесията
                         st.session_state["history"][i]["Статус"] = result
                         st.session_state["history"][i]["Печалба"] = profit
                         st.experimental_rerun()
@@ -109,3 +104,29 @@ with tabs[2]:
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
         st.success("Новата банка е запазена.")
+
+# === ТАБ 4: Статистика ===
+with tabs[3]:
+    st.header("Разширена статистика")
+
+    hist_df = pd.DataFrame(st.session_state["history"])
+    hist_df["Дата"] = pd.to_datetime(hist_df["Дата"])
+
+    if not hist_df.empty:
+        profit_by_day = hist_df[hist_df["Статус"].isin(["Печели", "Губи", "Отменен"])].groupby("Дата")["Печалба"].sum().reset_index()
+
+        profit_chart = alt.Chart(profit_by_day).mark_bar().encode(
+            x="Дата:T",
+            y="Печалба:Q",
+            tooltip=["Дата", "Печалба"]
+        ).properties(title="Нетна печалба по дни", height=300)
+
+        st.altair_chart(profit_chart, use_container_width=True)
+
+        # Успеваемост
+        total_settled = hist_df[hist_df["Статус"].isin(["Печели", "Губи"])]
+        win_rate = (total_settled["Статус"] == "Печели").mean() * 100 if not total_settled.empty else 0
+
+        st.metric("Успеваемост", f"{win_rate:.1f}%")
+    else:
+        st.info("Няма достатъчно данни за графики.")
