@@ -1,5 +1,7 @@
-import streamlit as st from datetime import datetime import pandas as pd import matplotlib.pyplot as plt from matplotlib.ticker import MaxNLocator
-
+import streamlit as st
+from datetime import datetime
+import pandas as pd
+import matplotlib.pyplot as plt
 st.set_page_config(layout="wide", page_title="Value Bets Tracker")
 
 === Инициализация на сесия ===
