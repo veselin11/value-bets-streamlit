@@ -11,12 +11,8 @@ import os
 
 st.set_page_config(page_title="Value Bets with ML", layout="wide")
 
-# --- Функция за обучение на модела ---
-def train_model():
-    # Зареждаме данни
-    df = pd.read_csv("football_data.csv")
-
-    # Тук адаптирай колоните към твоите данни
+# --- Функция за обучение на модела с подаване на DataFrame ---
+def train_model(df):
     features = df[['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']]
     target = df['FTR']  # 'H','D','A'
 
@@ -30,7 +26,6 @@ def train_model():
 
     acc = model.score(X_test, y_test)
 
-    # Записваме
     joblib.dump(model, 'value_bet_model.pkl')
     joblib.dump(le, 'label_encoder.pkl')
 
@@ -56,9 +51,7 @@ def generate_ml_bets(model, le, n=20):
         market = random.choice(markets)
         pick = random.choice(['1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Yes', 'No'])
 
-        # Генерираме примерни коефициенти и features
         odds = round(random.uniform(1.5, 3.5), 2)
-        # Симулираме features за модела - тук може да е по-реално с истински статистики
         fthg = random.randint(0, 4)
         ftag = random.randint(0, 4)
         b365h = round(random.uniform(1.2, 3.0), 2)
@@ -69,13 +62,11 @@ def generate_ml_bets(model, le, n=20):
 
         if model and le:
             pred_probs = model.predict_proba(features)[0]
-            # Вземаме вероятността за избран резултат pick (1, X, 2)
-            # Map pick към индекс: 0->H, 1->D, 2->A
             pick_map = {'1':0, 'X':1, '2':2}
             if pick in pick_map:
                 est_prob = pred_probs[pick_map[pick]]
             else:
-                est_prob = random.uniform(0.35, 0.75)  # fallback
+                est_prob = random.uniform(0.35, 0.75)
         else:
             est_prob = random.uniform(0.35, 0.75)
 
@@ -96,42 +87,57 @@ def generate_ml_bets(model, le, n=20):
     df = pd.DataFrame(rows)
     return df[df['Value %'] > 0].sort_values(by='Value %', ascending=False).reset_index(drop=True)
 
-# --- UI ---
+# --- Основен UI ---
 
 st.title("Value Bets с Машинно Обучение")
 
-# Обучение
-if st.button("Обучи модел"):
-    with st.spinner("Обучение на модела..."):
-        accuracy = train_model()
-        st.success(f"Моделът е обучен! Точност на теста: {accuracy:.2f}")
+# Качване на CSV файл
+uploaded_file = st.file_uploader("Качи CSV с футболни данни (колони: FTHG, FTAG, B365H, B365D, B365A, FTR)", type=["csv"])
 
-# Зареждаме модела
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file)
+        st.success("Данните са заредени успешно!")
+        st.write(df.head())
+        
+        if st.button("Обучи модел с качените данни"):
+            with st.spinner("Обучение на модела..."):
+                accuracy = train_model(df)
+                st.success(f"Моделът е обучен! Точност на теста: {accuracy:.2f}")
+    except Exception as e:
+        st.error(f"Грешка при зареждане на файла: {e}")
+else:
+    st.info("Моля, качете CSV файл с подходящи колони за обучение.")
+
+# Зареждане на обучен модел
 model, le = load_model()
 if model is None or le is None:
-    st.warning("Моделът не е зареден. Моля, обучи модела.")
+    st.warning("Моделът не е зареден. Моля, обучи модела с качените данни.")
 
-# Настройки за филтриране
+# Настройки за филтриране на прогнози
 col1, col2 = st.columns(2)
 with col1:
     min_value = st.slider("Минимален Value %", 0.0, 20.0, 4.0, step=0.5)
 with col2:
     max_rows = st.slider("Макс. брой прогнози", 5, 50, 15)
 
-# Генериране прогнози с ML
-bets_df = generate_ml_bets(model, le, n=40)
+# Генериране и филтриране на прогнози
+bets_df = generate_ml_bets(model, le, n=40) if model else pd.DataFrame()
 filtered_df = bets_df[bets_df['Value %'] >= min_value].head(max_rows)
 
-st.subheader("Препоръчани залози")
-st.dataframe(filtered_df, use_container_width=True)
+if not filtered_df.empty:
+    st.subheader("Препоръчани залози")
+    st.dataframe(filtered_df, use_container_width=True)
+else:
+    st.info("Няма прогнози, отговарящи на избраните критерии или моделът не е обучен.")
 
-# История
+# Управление на историята със залозите
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame()
 
-if st.button("Добави всички към история"):
-    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates()
+if st.button("Добави всички препоръчани залози към историята"):
+    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates().reset_index(drop=True)
 
 if not st.session_state.history.empty:
     st.subheader("История на залозите")
-    st.dataframe(st.session_state.history.reset_index(drop=True), use_container_width=True)
+    st.dataframe(st.session_state.history, use_container_width=True)
