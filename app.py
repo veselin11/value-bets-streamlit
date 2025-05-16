@@ -24,6 +24,8 @@ tabs = st.tabs(["Прогнози", "История", "Настройки", "С�
 # === ТАБ 1: Прогнози ===
 with tabs[0]:
     st.title("Стойностни залози – Симулирани данни")
+    st.caption("Кликни на Сума за залог, за да запишеш мача в историята")
+
     df = pd.DataFrame(value_bets)
 
     for i, row in df.iterrows():
@@ -34,6 +36,7 @@ with tabs[0]:
             col3.write(f"{row['Коефициент']:.2f}")
             col4.write(f"{row['Value %']}%")
             col5.write(row["Начален час"])
+
             suggested_bet = round(st.session_state["balance"] * 0.05, -1)
             if col6.button(f"Залог {suggested_bet} лв", key=f"bet_{i}"):
                 profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
@@ -43,7 +46,7 @@ with tabs[0]:
                     "Коефициент": row["Коефициент"],
                     "Сума": suggested_bet,
                     "Печалба": profit,
-                    "Дата": datetime.now().strftime("%Y-%m-%d"),
+                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Статус": "Предстои"
                 })
                 st.success(f"Заложено {suggested_bet} лв на {row['Мач']} – {row['Пазар']}")
@@ -51,47 +54,17 @@ with tabs[0]:
 # === ТАБ 2: История ===
 with tabs[1]:
     st.header("История на залозите")
-
     if st.session_state["history"]:
         history_df = pd.DataFrame(st.session_state["history"])
+        st.dataframe(history_df, use_container_width=True)
 
-        status_filter = st.selectbox("Филтрирай по статус", ["Всички", "Предстои", "Печели", "Губи", "Отменен"])
-        if status_filter != "Всички":
-            history_df = history_df[history_df["Статус"] == status_filter]
-
-        for i, row in history_df.iterrows():
-            with st.container(border=True):
-                col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 1.2, 1, 1, 1, 1.5, 2])
-                col1.markdown(f"**{row['Мач']}**")
-                col2.write(row["Пазар"])
-                col3.write(f"{row['Коефициент']}")
-                col4.write(f"{row['Сума']} лв")
-                col5.write(f"{row['Печалба']} лв")
-                col6.write(row["Статус"])
-
-                if row["Статус"] == "Предстои":
-                    result = col7.selectbox("Обнови", ["-", "Печели", "Губи", "Отменен"], key=f"res_{i}")
-                    if result != "-":
-                        if result == "Печели":
-                            profit = round((row["Коефициент"] - 1) * row["Сума"], 2)
-                        elif result == "Губи":
-                            profit = -row["Сума"]
-                        else:
-                            profit = 0.0
-                        st.session_state["history"][i]["Статус"] = result
-                        st.session_state["history"][i]["Печалба"] = profit
-                        st.experimental_rerun()
-
-        # Обобщена статистика
-        settled = [b for b in st.session_state["history"] if b["Статус"] in ["Печели", "Губи", "Отменен"]]
-        total_bets = len(settled)
-        total_staked = sum(b["Сума"] for b in settled)
-        total_profit = sum(b["Печалба"] for b in settled)
+        total_bets = len(history_df)
+        total_staked = sum(b["Сума"] for b in st.session_state["history"])
+        total_profit = sum(b["Печалба"] for b in st.session_state["history"])
         roi = (total_profit / total_staked) * 100 if total_staked > 0 else 0
 
-        st.markdown("---")
         col1, col2, col3 = st.columns(3)
-        col1.metric("Реални залози", total_bets)
+        col1.metric("Залози", total_bets)
         col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
         col3.metric("ROI", f"{roi:.2f}%")
     else:
@@ -107,26 +80,44 @@ with tabs[2]:
 
 # === ТАБ 4: Статистика ===
 with tabs[3]:
-    st.header("Разширена статистика")
+    st.header("Статистика")
+    if st.session_state["history"]:
+        df = pd.DataFrame(st.session_state["history"])
+        df["Дата"] = pd.to_datetime(df["Дата"])
 
-    hist_df = pd.DataFrame(st.session_state["history"])
-    hist_df["Дата"] = pd.to_datetime(hist_df["Дата"])
+        # Успеваемост (базирано на положителна печалба)
+        wins = df[df["Печалба"] > 0]
+        success_rate = len(wins) / len(df) * 100
 
-    if not hist_df.empty:
-        profit_by_day = hist_df[hist_df["Статус"].isin(["Печели", "Губи", "Отменен"])].groupby("Дата")["Печалба"].sum().reset_index()
+        # Среден value (ако има такива данни)
+        avg_value = df["Коефициент"].mean() if not df.empty else 0
 
-        profit_chart = alt.Chart(profit_by_day).mark_bar().encode(
+        col1, col2 = st.columns(2)
+        col1.metric("Успеваемост", f"{success_rate:.2f}%")
+        col2.metric("Среден коефициент", f"{avg_value:.2f}")
+
+        # Печалба по дни
+        profit_by_day = df.groupby(df["Дата"].dt.date)["Печалба"].sum().reset_index()
+        profit_by_day.columns = ["Дата", "Печалба"]
+
+        chart = alt.Chart(profit_by_day).mark_bar().encode(
             x="Дата:T",
             y="Печалба:Q",
             tooltip=["Дата", "Печалба"]
         ).properties(title="Нетна печалба по дни", height=300)
 
-        st.altair_chart(profit_chart, use_container_width=True)
+        st.altair_chart(chart, use_container_width=True)
 
-        # Успеваемост
-        total_settled = hist_df[hist_df["Статус"].isin(["Печели", "Губи"])]
-        win_rate = (total_settled["Статус"] == "Печели").mean() * 100 if not total_settled.empty else 0
+        # Графика на банката по дни
+        profit_by_day = profit_by_day.sort_values("Дата")
+        profit_by_day["Банка"] = st.session_state["balance"] + profit_by_day["Печалба"].cumsum()
 
-        st.metric("Успеваемост", f"{win_rate:.1f}%")
+        balance_chart = alt.Chart(profit_by_day).mark_line(point=True).encode(
+            x="Дата:T",
+            y=alt.Y("Банка:Q", title="Банка (лв)"),
+            tooltip=["Дата", "Банка"]
+        ).properties(title="Растеж на банката по дни", height=300)
+
+        st.altair_chart(balance_chart, use_container_width=True)
     else:
-        st.info("Няма достатъчно данни за графики.")
+        st.info("Няма достатъчно данни за статистика.")
