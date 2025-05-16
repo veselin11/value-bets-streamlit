@@ -60,7 +60,20 @@ with tabs[0]:
 # === TAB 2 ===
 with tabs[1]:
     st.markdown("## История на залозите")
+st.markdown("### Таблица с филтри")
 
+    df = pd.DataFrame(st.session_state["history"])
+    if not df.empty:
+        # Филтър по статус
+        selected_status = st.multiselect("Статус", ["Предстои", "Печели", "Губи"], default=["Предстои", "Печели", "Губи"])
+        filtered_df = df[df["Статус"].isin(selected_status)]
+
+        # Сортиране
+        sort_by = st.selectbox("Сортирай по", ["Дата", "Печалба", "Коефициент"])
+        filtered_df = filtered_df.sort_values(sort_by, ascending=False)
+
+        # Показване на таблицата
+        st.dataframe(filtered_df.reset_index(drop=True), use_container_width=True)
     if not st.session_state["history"]:
         st.info("Няма направени залози.")
     else:
