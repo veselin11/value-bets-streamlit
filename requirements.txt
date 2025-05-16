@@ -6,3 +6,4 @@ scikit-learn
 requests
 numpy
 seaborn
+streamlit-aggrid
