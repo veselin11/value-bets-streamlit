@@ -128,4 +128,3 @@ with tabs[2]:
     if st.button("Запази"):
         st.session_state["balance"] = new_balance
         st.success("Новата банка е запазена.")
-        
