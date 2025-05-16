@@ -9,12 +9,27 @@ from sklearn.preprocessing import LabelEncoder
 import joblib
 import os
 import requests
-import time  # ново за изчакване
+import time
 
-st.set_page_config(page_title="Value Bets with ML and Real Matches", layout="wide")
+st.set_page_config(page_title="Value Bets: ML + Реални мачове", layout="wide")
 
-# --- Функция за обучение на модела ---
+# ---------------------------
+# --- Глобални настройки ---
+# ---------------------------
+API_KEY = 'ТУК_ВЪВЕДИ_СВОЯ_API_КЛЮЧ'
+LEAGUE_ID = 39  # Premier League примерно
+SEASON = 2025
+
+# ---------------------------
+# --- Функции за ML модел ---
+# ---------------------------
 def train_model(df):
+    # Проверяваме дали имаме нужните колони
+    needed_cols = ['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A', 'FTR']
+    if not all(col in df.columns for col in needed_cols):
+        st.error("Липсват необходими колони за обучение.")
+        return None
+
     features = df[['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']]
     target = df['FTR']  # 'H','D','A'
 
@@ -33,7 +48,6 @@ def train_model(df):
 
     return acc
 
-# --- Функция за зареждане на модела ---
 def load_model():
     if os.path.exists('value_bet_model.pkl') and os.path.exists('label_encoder.pkl'):
         model = joblib.load('value_bet_model.pkl')
@@ -41,7 +55,9 @@ def load_model():
         return model, le
     return None, None
 
-# --- Генериране на ML прогнози ---
+# ---------------------------
+# --- Генериране ML залози ---
+# ---------------------------
 def generate_ml_bets(model, le, n=40):
     leagues = ['Premier League', 'La Liga', 'Serie A', 'Bundesliga']
     markets = ['1X2', 'Over/Under 2.5', 'Both Teams to Score']
@@ -89,10 +105,10 @@ def generate_ml_bets(model, le, n=40):
     df = pd.DataFrame(rows)
     return df[df['Value %'] > 0].sort_values(by='Value %', ascending=False).reset_index(drop=True)
 
-# --- Зареждане на реални предстоящи мачове от API-Football с обработка и retry ---
-API_KEY = 'ТУК_ВЪВЕДИ_СВОЯ_API_КЛЮЧ'
-
-def fetch_upcoming_matches(league_id=39, season=2025, date=None, max_retries=3, retry_delay=5):
+# ---------------------------
+# --- Зареждане реални мачове с retry и обработка ---
+# ---------------------------
+def fetch_upcoming_matches(league_id=LEAGUE_ID, season=SEASON, date=None, max_retries=3, retry_delay=5):
     url = "https://v3.football.api-sports.io/fixtures"
     headers = {
         "x-rapidapi-key": API_KEY,
@@ -126,7 +142,7 @@ def fetch_upcoming_matches(league_id=39, season=2025, date=None, max_retries=3, 
                 return pd.DataFrame()
 
         elif response.status_code == 403:
-            st.error(f"Грешка 403: Достъпът е отказан (опит {attempt + 1} от {max_retries}). Изчаквам {retry_delay} секунди преди повторен опит.")
+            st.error(f"Грешка 403: Достъп отказан (опит {attempt + 1} от {max_retries}). Изчаквам {retry_delay} секунди.")
             time.sleep(retry_delay)
             continue
         else:
@@ -136,21 +152,25 @@ def fetch_upcoming_matches(league_id=39, season=2025, date=None, max_retries=3, 
     st.error("Неуспешно зареждане на мачове след няколко опита. Моля, опитайте по-късно.")
     return pd.DataFrame()
 
-# --- UI ---
+# ---------------------------
+# --- UI и логика ---
+# ---------------------------
 
-st.title("Value Bets с Машинно Обучение и Реални Мачове")
+st.title("Value Bets - Машинно обучение + Реални мачове")
 
-uploaded_files = st.file_uploader("Качи един или повече CSV файла с футболни данни", type=["csv"], accept_multiple_files=True)
+# --- Качване на файлове за обучение ---
+uploaded_files = st.file_uploader("Качи CSV файлове с данни за обучение", type=["csv"], accept_multiple_files=True)
 
 if uploaded_files:
     all_dfs = []
     for file in uploaded_files:
         try:
             df = pd.read_csv(file)
-            if all(col in df.columns for col in ['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A', 'FTR']):
+            needed_cols = ['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A', 'FTR']
+            if all(col in df.columns for col in needed_cols):
                 all_dfs.append(df)
             else:
-                st.warning(f"Файлът {file.name} няма нужните колони и ще бъде пропуснат.")
+                st.warning(f"Файлът {file.name} няма всички нужни колони и се пропуска.")
         except Exception as e:
             st.error(f"Грешка при зареждане на {file.name}: {e}")
 
@@ -159,30 +179,67 @@ if uploaded_files:
         st.success(f"Успешно заредени {len(all_dfs)} файла с общо {len(full_df)} записа.")
         st.dataframe(full_df.head())
 
-        if st.button("Обучи модел с всички данни"):
+        if st.button("Обучи ML модел"):
             with st.spinner("Обучение на модела..."):
                 acc = train_model(full_df)
-                st.success(f"Моделът е обучен успешно! Точност: {acc:.2f}")
+                if acc:
+                    st.success(f"Моделът е обучен! Точност на теста: {acc:.2f}")
+                else:
+                    st.error("Обучението неуспешно.")
 
 model, le = load_model()
 if model is None or le is None:
-    st.warning("Моделът не е зареден. Качи и обучи нови данни.")
+    st.warning("Няма зареден ML модел. Можеш да качиш данни и да го обучиш.")
 
-col1, col2 = st.columns(2)
-with col1:
-    min_value = st.slider("Минимален Value %", 0.0, 20.0, 4.0, step=0.5)
-with col2:
-    max_rows = st.slider("Макс. брой прогнози", 5, 50, 15)
+# --- Генериране ML залози ---
+min_value = st.slider("Минимален Value % за прогнози", 0.0, 20.0, 4.0, 0.5)
+max_rows = st.slider("Максимален брой прогнози за показване", 5, 50, 15)
 
 bets_df = generate_ml_bets(model, le, n=40)
 filtered_df = bets_df[bets_df['Value %'] >= min_value].head(max_rows)
 
-st.subheader("Препоръчани залози")
+st.subheader("ML Препоръчани Залози")
 st.dataframe(filtered_df, use_container_width=True)
 
+# --- История на залозите ---
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame()
 
-if st.button("Добави всички към история"):
-    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates()
+if st.button("Добави показаните залози в историята"):
+    st.session_state.history = pd.concat([st.session_state.history, filtered_df]).drop_duplicates().reset_index(drop=True)
+    st.success(f"Добавени {len(filtered_df)} залози в историята.")
+
+if not st.session_state.history.empty:
+    st.subheader("История на залозите")
+    st.dataframe(st.session_state.history, use_container_width=True)
+
+# --- Зареждане и показване на реални предстоящи мачове ---
+st.header("Реални предстоящи мачове")
+date_filter = st.date_input("Избери дата за мачове", value=datetime.today())
+
+if st.button("Зареди мачове от API"):
+    with st.spinner("Зареждане..."):
+        matches_df = fetch_upcoming_matches(date=date_filter.strftime('%Y-%m-%d'))
+        if not matches_df.empty:
+            st.dataframe(matches_df)
+        else:
+            st.info("Няма мачове за избраната дата.")
+
+# --- Статистика (успеваемост, ROI) от историята ---
+if not st.session_state.history.empty:
+    st.header("Статистика")
+    history = st.session_state.history
+
+    # Успеваемост - примерна (ще трябва да се въвеждат резултати ръчно или по API)
+    # За момента примерна успеваемост - случайно
+    wins = random.randint(0, len(history))
+    total = len(history)
+    roi = (wins * 0.8 - (total - wins)) / total * 100  # примерен ROI %
+
+    st.metric("Общо залози", total)
+    st.metric("Печеливши залози (примерно)", wins)
+    st.metric("ROI (примерно)", f"{roi:.2f} %")
+
+st.markdown("---")
+st.caption("Версия: 1.0, Обединена версия с всички подобрения.")
 
