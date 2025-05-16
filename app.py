@@ -103,4 +103,4 @@ with tabs[1]:
         st.download_button("Изтегли като CSV", data=updated_df.to_csv(index=False), file_name="istoriya.csv")
     else:
         st.info("Няма още запазени залози.")
-        
+    
