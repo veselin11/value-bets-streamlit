@@ -113,3 +113,4 @@ with tabs[2]:
         st.line_chart(df.groupby("Дата")["Печалба"].sum().cumsum())
     else:
         st.info("Няма налични данни за статистика.")
+        
