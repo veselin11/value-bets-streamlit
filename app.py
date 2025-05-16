@@ -1,144 +1,98 @@
-import streamlit as st
-from datetime import datetime
-import pandas as pd
-import io
-import matplotlib.pyplot as plt
-import os
+import streamlit as st from datetime import datetime import pandas as pd import matplotlib.pyplot as plt
 
-# === Конфигурация на страницата ===
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
-# === Сесийна инициализация ===
-if "history" not in st.session_state:
-    st.session_state["history"] = []
+=== Сесийна инициализация ===
 
-if "balance" not in st.session_state:
-    st.session_state["balance"] = 500
+if "history" not in st.session_state: st.session_state["history"] = [] if "balance" not in st.session_state: st.session_state["balance"] = 500.0
 
-# === Примерни залози за днес ===
-value_bets = [
-    {"Мач": "Man City vs Arsenal", "Пазар": "Над 2.5", "Коефициент": 1.85, "Value %": 9.1, "Начален час": "21:00"},
-    {"Мач": "Juventus vs Milan", "Пазар": "ГГ", "Коефициент": 2.05, "Value %": 7.2, "Начален час": "21:45"},
-    {"Мач": "Leipzig vs Bayern", "Пазар": "2", "Коефициент": 2.30, "Value %": 5.5, "Начален час": "19:30"},
-    {"Мач": "PSG vs Lyon", "Пазар": "1", "Коефициент": 1.60, "Value %": 3.8, "Начален час": "22:00"},
-]
+=== Примерни прогнози ===
 
-# === Сигурност според Value % ===
-def get_confidence_color(value_percent):
-    if value_percent >= 8:
-        return "#d4edda"  # Светлозелено
-    elif value_percent >= 5:
-        return "#fff3cd"  # Светложълто
-    else:
-        return "#f8d7da"  # Светлочервено
+value_bets = [ {"Мач": "Барселона - Реал", "Пазар": "1Х", "Коефициент": 2.10, "Value %": 15, "Начален час": "22:00"}, {"Мач": "Арсенал - Челси", "Пазар": "Над 2.5", "Коефициент": 1.85, "Value %": 12, "Начален час": "21:30"}, {"Мач": "Байерн - Борусия", "Пазар": "Х2", "Коефициент": 3.25, "Value %": 18, "Начален час": "19:45"}, {"Мач": "Интер - Милан", "Пазар": "1", "Коефициент": 2.50, "Value %": 22, "Начален час": "20:00"}, ]
 
-# === Tabs ===
-tabs = st.tabs(["Прогнози", "История", "Графика", "Настройки"])
+=== Функция за цветова индикация на сигурност ===
 
-# === ТАБ 1: Прогнози ===
-with tabs[0]:
-    st.title("Стойностни залози – Днес")
-    st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
+def get_confidence_color(value_percent): if value_percent >= 20: return "#b2f2bb"  # светло зелено elif value_percent >= 15: return "#ffe066"  # жълто else: return "#ffa8a8"  # светло червено
 
-    df = pd.DataFrame(value_bets)
+=== ТАБОВЕ ===
 
-    for i, row in df.iterrows():
-        bg_color = get_confidence_color(row["Value %"])
-        with st.container():
-            st.markdown(
-                f"""<div style="background-color: {bg_color}; padding: 10px; border-radius: 10px; margin-bottom: 10px;">
-                    <b>{row['Мач']}</b> | Пазар: {row['Пазар']} | Коеф.: {row['Коефициент']:.2f} | Value: {row['Value %']}% | Час: {row['Начален час']}
-                    <br><br>
-                    <form action="" method="post">
-                        <button name="bet_{i}" type="submit" style="background-color:#007bff; color:white; border:none; padding:5px 15px; border-radius:5px;">Залог {round(st.session_state['balance'] * 0.05, -1)} лв</button>
-                    </form>
-                </div>""",
-                unsafe_allow_html=True,
-            )
+tabs = st.tabs(["Прогнози", "История", "Статистика"])
 
-            if st.form_submit_button(f"bet_{i}"):
-                suggested_bet = round(st.session_state["balance"] * 0.05, -1)
-                profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
-                st.session_state["history"].append({
-                    "Мач": row["Мач"],
-                    "Пазар": row["Пазар"],
-                    "Коефициент": row["Коефициент"],
-                    "Сума": suggested_bet,
-                    "Печалба": profit,
-                    "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Статус": "Предстои"
-                })
-                st.experimental_rerun()
+=== ТАБ 1: Прогнози ===
 
-# === ТАБ 2: История ===
-with tabs[1]:
-    st.header("История на залозите")
-    if st.session_state["history"]:
-        history_df = pd.DataFrame(st.session_state["history"])
+with tabs[0]: st.title("Стойностни залози – Днес") st.caption("Кликни на бутона за залог, за да го добавиш в историята.")
 
-        # Оцветяване на редовете според статус
-        def highlight_status(row):
-            color = ""
-            if row["Статус"] == "Печели":
-                color = "#d4edda"
-            elif row["Статус"] == "Губи":
-                color = "#f8d7da"
-            else:
-                color = "#fff3cd"
-            return [f"background-color: {color}"] * len(row)
+df = pd.DataFrame(value_bets)
 
-        st.dataframe(
-            history_df.style.apply(highlight_status, axis=1),
-            use_container_width=True
+for i, row in df.iterrows():
+    bg_color = get_confidence_color(row["Value %"])
+    with st.container():
+        st.markdown(
+            f"""<div style="background-color: {bg_color}; padding: 10px; border-radius: 10px; margin-bottom: 10px;">
+                <b>{row['Мач']}</b> | Пазар: {row['Пазар']} | Коеф.: {row['Коефициент']:.2f} | Value: {row['Value %']}% | Час: {row['Начален час']}
+            </div>""",
+            unsafe_allow_html=True,
         )
 
-        # Метрики
-        total_bets = len(history_df)
-        total_staked = history_df["Сума"].sum()
-        total_profit = history_df["Печалба"].sum()
-        roi = (total_profit / total_staked) * 100 if total_staked else 0
+        col1, _ = st.columns([1, 4])
+        if col1.button(f"Залог {round(st.session_state['balance'] * 0.05, -1)} лв", key=f"bet_{i}"):
+            suggested_bet = round(st.session_state["balance"] * 0.05, -1)
+            profit = round((row["Коефициент"] - 1) * suggested_bet, 2)
+            st.session_state["history"].append({
+                "Мач": row["Мач"],
+                "Пазар": row["Пазар"],
+                "Коефициент": row["Коефициент"],
+                "Сума": suggested_bet,
+                "Печалба": profit,
+                "Дата": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Статус": "Предстои"
+            })
+            st.success(f"Залогът е добавен за {row['Мач']}")
+            st.rerun()
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Общо залози", total_bets)
-        col2.metric("Нетна печалба", f"{total_profit:.2f} лв")
-        col3.metric("ROI", f"{roi:.2f}%")
+=== ТАБ 2: История ===
 
-        # Експорт
-        def to_excel(df):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                df.to_excel(writer, index=False, sheet_name="История")
-            return output.getvalue()
+with tabs[1]: st.title("История на залозите") hist_df = pd.DataFrame(st.session_state["history"])
 
-        excel_data = to_excel(history_df)
-        st.download_button("Свали Excel", data=excel_data, file_name="istoriya_zalozi.xlsx")
-    else:
-        st.info("Все още няма записани залози.")
+def status_color(status):
+    return {
+        "Печели": "#d4edda",
+        "Губи": "#f8d7da",
+        "Предстои": "#fff3cd"
+    }.get(status, "white")
 
-# === ТАБ 3: Графика ===
-with tabs[2]:
-    st.header("Графика на печалбата")
-    if st.session_state["history"]:
-        graph_df = pd.DataFrame(st.session_state["history"])
-        graph_df["Дата"] = pd.to_datetime(graph_df["Дата"])
-        graph_df["Натрупана печалба"] = graph_df["Печалба"].cumsum()
+if not hist_df.empty:
+    for i, row in hist_df.iterrows():
+        cols = st.columns([2, 2, 1, 1, 1, 1])
+        bg = status_color(row["Статус"])
+        with cols[0]:
+            st.markdown(f"<div style='background-color:{bg}; padding:5px; border-radius:5px'>{row['Мач']}</div>", unsafe_allow_html=True)
+        with cols[1]:
+            st.markdown(f"<div style='background-color:{bg}; padding:5px; border-radius:5px'>{row['Пазар']}</div>", unsafe_allow_html=True)
+        with cols[2]:
+            st.markdown(f"<div style='background-color:{bg}; padding:5px; border-radius:5px'>{row['Коефициент']}</div>", unsafe_allow_html=True)
+        with cols[3]:
+            st.markdown(f"<div style='background-color:{bg}; padding:5px; border-radius:5px'>{row['Сума']} лв</div>", unsafe_allow_html=True)
+        with cols[4]:
+            status = st.selectbox("", ["Предстои", "Печели", "Губи"], index=["Предстои", "Печели", "Губи"].index(row["Статус"]), key=f"status_{i}")
+            st.session_state["history"][i]["Статус"] = status
 
-        fig, ax = plt.subplots()
-        ax.plot(graph_df["Дата"], graph_df["Натрупана печалба"], marker="o", color="green")
-        ax.set_title("Натрупана печалба")
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Печалба (лв)")
-        ax.grid(True)
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
-    else:
-        st.info("Няма данни за графика.")
+else:
+    st.info("Няма още запазени залози.")
 
-# === ТАБ 4: Настройки ===
-with tabs[3]:
-    st.header("Настройки")
-    new_balance = st.number_input("Начална банка", min_value=100, value=st.session_state["balance"], step=10)
-    if st.button("Запази"):
-        st.session_state["balance"] = new_balance
-        st.success("Банката е обновена.")
-        st.rerun()
+=== ТАБ 3: Статистика ===
+
+with tabs[2]: st.title("Обща статистика") df = pd.DataFrame(st.session_state["history"]) if not df.empty: total_bets = len(df) won = df[df["Статус"] == "Печели"] lost = df[df["Статус"] == "Губи"]
+
+net_profit = won["Печалба"].sum() - lost["Сума"].sum()
+    roi = net_profit / df["Сума"].sum() * 100 if df["Сума"].sum() > 0 else 0
+
+    st.metric("Залози", total_bets)
+    st.metric("Печалба", f"{net_profit:.2f} лв")
+    st.metric("ROI", f"{roi:.2f}%")
+
+    st.line_chart(df.groupby("Дата")["Печалба"].sum().cumsum())
+else:
+    st.info("Няма налични данни за статистика.")
+
+                                
