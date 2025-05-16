@@ -1,4 +1,9 @@
-import streamlit as st from datetime import datetime import pandas as pd import io import matplotlib.pyplot as plt import os
+import streamlit as st
+from datetime import datetime
+import pandas as pd
+import io
+import matplotlib.pyplot as plt
+import os
 
 st.set_page_config(page_title="Стойностни залози", layout="wide")
 
