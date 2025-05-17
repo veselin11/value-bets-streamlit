@@ -1,11 +1,21 @@
+import pandas as pd
 import joblib
 
 def load_model():
-    return joblib.load("value_bet_model.pkl")
+    model = joblib.load("value_bet_model.pkl")
+    encoders = joblib.load("label_encoders.pkl")
+    return model, encoders
 
-def predict_value_bet(model, matches_df):
-    # Тук трябва да подготвиш features за модела
-    # За пример връщаме фиктивни стойности
-    import numpy as np
-    # примерно, ако matches_df има N реда
-    return [0.6 for _ in range(len(matches_df))]
+def prepare_features(df, encoders):
+    # Трансформираме категориалните колони със запазените енкодери
+    df = df.copy()
+    df["Отбор 1"] = encoders["team1"].transform(df["Отбор 1"])
+    df["Отбор 2"] = encoders["team2"].transform(df["Отбор 2"])
+    df["Лига"] = encoders["league"].transform(df["Лига"])
+    return df
+
+def predict(df):
+    model, encoders = load_model()
+    X = prepare_features(df, encoders)
+    preds = model.predict_proba(X)[:, 1]  # вероятността за клас 1 (value bet)
+    return preds
