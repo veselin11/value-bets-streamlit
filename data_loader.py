@@ -1,39 +1,30 @@
 import pandas as pd
-import requests
-import streamlit as st
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 
-API_URL = "https://api.example.com/matches"  # смени с твоя API URL
-API_KEY = "685e423d2d9e078e7c5f7f9439e77f7c"
+def train_model():
+    df = pd.read_csv("football_data.csv")
 
-def load_matches_from_api(date):
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-    params = {"date": date.strftime("%Y-%m-%d")}
+    # Ако липсва колоната ValueBet, създай я с примерна логика
+    if "ValueBet" not in df.columns:
+        df["ValueBet"] = (df["Коеф"] > 2.0).astype(int)
 
-    try:
-        response = requests.get(API_URL, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+    enc_team1 = LabelEncoder()
+    enc_team2 = LabelEncoder()
+    enc_league = LabelEncoder()
 
-        if not data.get("response"):
-            st.warning("Няма мачове за избраната дата. Зареждам симулирани мачове.")
-            return load_upcoming_matches()
+    df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
+    df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
+    df["Лига"] = enc_league.fit_transform(df["Лига"])
 
-        matches = []
-        for match in data["response"]:
-            matches.append({
-                "Отбор 1": match["team1_name"],
-                "Отбор 2": match["team2_name"],
-                "Лига": match["league_name"],
-                "Коеф": match["odds_home_win"]
-            })
-        return pd.DataFrame(matches)
-    except Exception as e:
-        st.error(f"Грешка при зареждане на мачове: {e}")
-        return load_upcoming_matches()
+    X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
+    y = df["ValueBet"]
 
-def load_upcoming_matches():
-    matches = [
-        {"Отбор 1": "Лудогорец", "Отбор 2": "ЦСКА", "Лига": "Първа лига", "Дата": "2025-05-18", "Коеф": 2.4},
-        {"Отбор 1": "Арсенал", "Отбор 2": "Ман Сити", "Лига": "Висша лига", "Дата": "2025-05-18", "Коеф": 2.8},
-    ]
-    return pd.DataFrame(matches)
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+
+    joblib.dump(model, "value_bet_model.pkl")
+    joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
+
+    print("Моделът е обучен и записан успешно.")
