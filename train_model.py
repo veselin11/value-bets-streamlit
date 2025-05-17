@@ -6,6 +6,7 @@ import joblib
 def train_model():
     df = pd.read_csv("football_data.csv")
 
+    # Ако липсва колоната ValueBet, създай я с примерна логика
     if "ValueBet" not in df.columns:
         df["ValueBet"] = (df["Коеф"] > 2.0).astype(int)
 
@@ -23,7 +24,12 @@ def train_model():
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
 
+    # Запазваме модела и енкодерите
     joblib.dump(model, "value_bet_model.pkl")
-    joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
+    joblib.dump({
+        "team1": enc_team1,
+        "team2": enc_team2,
+        "league": enc_league
+    }, "label_encoders.pkl")
 
     print("Моделът е обучен и записан успешно.")
