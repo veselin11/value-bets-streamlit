@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 from datetime import datetime
 
-# Задай своя API ключ от allsportsapi.com тук
 API_KEY = "34fd7e0b821f644609d4fac44e3bc30f228e8dc0040b9f0c79aeef702c0f267f"
 
 BASE_URL = "https://allsportsapi.com/api/football/"
@@ -14,7 +13,8 @@ def get_fixtures_for_today(api_key):
         "met": "Fixtures",
         "APIkey": api_key,
         "from": today,
-        "to": today
+        "to": today,
+        "leagueId": "",  # ако искаш, сложи конкретна лига, иначе празно
     }
     response = requests.get(BASE_URL, params=params)
     if response.status_code != 200:
@@ -22,8 +22,10 @@ def get_fixtures_for_today(api_key):
         return pd.DataFrame()
 
     data = response.json()
+
+    # Погледни ключовете на data, ако няма "result" - провери как се връща резултата
     if "result" not in data:
-        st.error("Няма налични мачове или грешка в API отговора.")
+        st.error(f"API отговор без 'result' ключ: {data}")
         return pd.DataFrame()
 
     matches = data["result"]
@@ -38,7 +40,6 @@ def get_fixtures_for_today(api_key):
             "Статус": m.get("event_status", ""),
         })
     return pd.DataFrame(rows)
-
 
 st.title("Value Bets с allsportsapi.com")
 
