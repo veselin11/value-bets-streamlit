@@ -15,7 +15,7 @@ def predict(matches_df):
             if v in classes:
                 encoded.append(encoder.transform([v])[0])
             else:
-                # За unseen стойности подаваме -1
+                # unseen label -> encode as -1
                 encoded.append(-1)
         return np.array(encoded)
 
@@ -25,7 +25,7 @@ def predict(matches_df):
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
 
-    # Ако моделът не приема -1, замени с 0 или най-често срещана стойност
+    # Заменяме -1 с 0 (най-често срещана категория)
     X = X.replace(-1, 0)
 
     preds = model.predict_proba(X)[:, 1]
@@ -33,5 +33,4 @@ def predict(matches_df):
     results = matches_df.copy()
     results["value"] = preds
 
-    # Връщаме само с висока вероятност за value bet (>0.5)
     return results[results["value"] > 0.5].sort_values(by="value", ascending=False)
