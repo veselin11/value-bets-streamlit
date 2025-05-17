@@ -24,7 +24,6 @@ def train_model():
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # Запазваме модела и енкодерите
     joblib.dump(model, "value_bet_model.pkl")
     joblib.dump({
         "team1": enc_team1,
