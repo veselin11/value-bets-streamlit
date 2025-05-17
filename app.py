@@ -1,40 +1,28 @@
 import streamlit as st
 import pandas as pd
-from api_client import get_upcoming_matches
 from predictor import predict
-from datetime import date
 
-st.set_page_config(page_title="Value Bets Прогнози", layout="wide")
+def load_matches():
+    # Зареждаме мачовете от CSV (може да го замениш с API заявка)
+    df = pd.read_csv("football_data.csv")
+    # Внимавай: колоните трябва да са "Отбор 1", "Отбор 2", "Лига", "Коеф"
+    return df
 
 def main():
-    st.title("🎯 Value Bets Прогнози от Реални Мачове")
+    st.title("🎯 Value Bets Прогнози")
+    st.write("Получаване на предстоящи мачове и прогноза за стойностни залози")
 
-    # Избор на дата
-    selected_date = st.date_input("Изберете дата за мачове:", date.today())
+    matches_df = load_matches()
+    st.write(f"Намерени {len(matches_df)} мача")
 
-    st.write(f"📅 Търсим мачове за дата: {selected_date}")
+    # Правим прогноза
+    results_df = predict(matches_df)
 
-    # Зареждане на мачове
-    matches_df = get_upcoming_matches(selected_date.strftime("%Y-%m-%d"))
+    # Филтрираме стойностните залози (предсказани като 1)
+    value_bets = results_df[results_df["ValueBet_Prediction"] == 1]
 
-    if matches_df.empty:
-        st.warning("Няма достъпни мачове в момента или възникна грешка при заявката.")
-        return
-
-    # Прогноза с ML модел
-    preds = predict(matches_df)
-
-    # Добавяме колона с вероятност за value bet
-    matches_df["Вероятност за value bet"] = preds
-
-    # Филтрираме мачове с вероятност > 0.5 (примерна граница)
-    value_bets_df = matches_df[matches_df["Вероятност за value bet"] > 0.5]
-
-    if value_bets_df.empty:
-        st.info("Няма намерени стойностни залози за избраната дата.")
-    else:
-        st.subheader("🔎 Value залози:")
-        st.dataframe(value_bets_df.reset_index(drop=True))
+    st.subheader(f"Намерени стойностни залози: {len(value_bets)}")
+    st.dataframe(value_bets[["Отбор 1", "Отбор 2", "Лига", "Коеф", "ValueBet_Probability"]])
 
 if __name__ == "__main__":
     main()
