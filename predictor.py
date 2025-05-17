@@ -7,12 +7,16 @@ def load_model():
     return model, encoders
 
 def prepare_features(df, encoders):
-    # Трансформираме категориалните колони със запазените енкодери
     df = df.copy()
+    # Премахваме колоната "Дата", защото не се използва при обучение
+    if "Дата" in df.columns:
+        df = df.drop("Дата", axis=1)
+
     df["Отбор 1"] = encoders["team1"].transform(df["Отбор 1"])
     df["Отбор 2"] = encoders["team2"].transform(df["Отбор 2"])
     df["Лига"] = encoders["league"].transform(df["Лига"])
     return df
+
 
 def predict(df):
     model, encoders = load_model()
