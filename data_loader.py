@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 from datetime import date
 
-API_KEY = "твоят_ключ_тук"  # замени с реален ключ
+API_KEY = "685e423d2d9e078e7c5f7f9439e77f7c"  # замени с реален ключ
 API_URL = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
 
 headers = {
