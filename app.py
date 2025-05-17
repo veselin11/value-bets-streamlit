@@ -1,28 +1,31 @@
 import streamlit as st
 import pandas as pd
-from predictor import predict
 from api_client import get_upcoming_matches
+from predictor import predict
 
-st.title("Value Bet Predictor - Реални Футболни Мачове")
+st.set_page_config(page_title="Стойностни залози - футбол", layout="wide")
 
-# Зареждаме мачовете от API-то
-try:
+def main():
+    st.title("Стойностни залози - футбол")
+
+    # Зареждаме предстоящи мачове (примерно от Premier League и La Liga)
     matches_df = get_upcoming_matches()
-except Exception as e:
-    st.error(f"Грешка при зареждане на мачове: {e}")
-    matches_df = pd.DataFrame()
+    if matches_df.empty:
+        st.warning("Не са намерени предстоящи мачове.")
+        return
 
-if not matches_df.empty:
-    st.write("Предстоящи мачове:")
+    st.subheader("Предстоящи мачове")
     st.dataframe(matches_df)
 
-    # Предсказване на вероятности за value bet
-    try:
-        preds = predict(matches_df)
-        matches_df["Вероятност за value bet"] = preds
-        st.write("Мачове с вероятности за value bet:")
-        st.dataframe(matches_df.sort_values(by="Вероятност за value bet", ascending=False))
-    except Exception as e:
-        st.error(f"Грешка при прогнозиране: {e}")
-else:
-    st.info("Няма налични мачове за показване.")
+    # Бутони за прогнозиране
+    if st.button("Прогнозирай стойностните залози"):
+        try:
+            preds = predict(matches_df)
+            matches_df["Вероятност за value bet"] = preds
+            st.success("Прогнозирането е успешно!")
+            st.dataframe(matches_df)
+        except Exception as e:
+            st.error(f"Грешка при прогнозиране: {e}")
+
+if __name__ == "__main__":
+    main()
