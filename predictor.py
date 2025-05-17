@@ -1,3 +1,4 @@
+import pandas as pd
 import joblib
 import numpy as np
 
@@ -23,11 +24,8 @@ def predict(matches_df):
     df["Лига"] = enc_league.transform(df["Лига"])
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
+    preds = model.predict_proba(X)[:, 1]
 
-    preds_proba = model.predict_proba(X)[:, 1]
-
-    value = preds_proba * df["Коеф"] - 1
-
-    df["value"] = value
-
-    return df[df["value"] > 0].sort_values(by="value", ascending=False)
+    results = matches_df.copy()
+    results["value"] = preds
+    return results[results["value"] > 0.5].sort_values(by="value", ascending=False)
