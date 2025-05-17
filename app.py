@@ -1,28 +1,43 @@
 import streamlit as st
 import pandas as pd
-from predictor import predict
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 
-def load_matches():
-    # Зареждаме мачовете от CSV (може да го замениш с API заявка)
+def train_model():
     df = pd.read_csv("football_data.csv")
-    # Внимавай: колоните трябва да са "Отбор 1", "Отбор 2", "Лига", "Коеф"
-    return df
+
+    enc_team1 = LabelEncoder()
+    enc_team2 = LabelEncoder()
+    enc_league = LabelEncoder()
+
+    df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
+    df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
+    df["Лига"] = enc_league.fit_transform(df["Лига"])
+
+    X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
+    y = df["ValueBet"]
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+
+    joblib.dump(model, "value_bet_model.pkl")
+    joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
+
+    st.success("Моделът беше обучен и записан успешно!")
 
 def main():
     st.title("🎯 Value Bets Прогнози")
-    st.write("Получаване на предстоящи мачове и прогноза за стойностни залози")
 
-    matches_df = load_matches()
-    st.write(f"Намерени {len(matches_df)} мача")
+    if st.button("Обучение на модела"):
+        with st.spinner("Обучение на модела... Моля изчакайте"):
+            train_model()
 
-    # Правим прогноза
-    results_df = predict(matches_df)
-
-    # Филтрираме стойностните залози (предсказани като 1)
-    value_bets = results_df[results_df["ValueBet_Prediction"] == 1]
-
-    st.subheader(f"Намерени стойностни залози: {len(value_bets)}")
-    st.dataframe(value_bets[["Отбор 1", "Отбор 2", "Лига", "Коеф", "ValueBet_Probability"]])
+    # Тук идва твоя код за зареждане на мачове и предсказване с вече обучен модел
+    # Например:
+    # matches_df = зареждане_на_мачове()
+    # results_df = predict(matches_df)
+    # st.dataframe(results_df)
 
 if __name__ == "__main__":
     main()
