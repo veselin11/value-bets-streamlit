@@ -1,17 +1,28 @@
 import streamlit as st
+import pandas as pd
 from predictor import predict
 from api_client import get_upcoming_matches
 
-st.title("⚽ Value Bets Прогнози – Реални Мачове")
+st.title("Value Bet Predictor - Реални Футболни Мачове")
 
-matches_df = get_upcoming_matches(count=10)
+# Зареждаме мачовете от API-то
+try:
+    matches_df = get_upcoming_matches()
+except Exception as e:
+    st.error(f"Грешка при зареждане на мачове: {e}")
+    matches_df = pd.DataFrame()
 
-if matches_df.empty:
-    st.warning("Няма налични мачове в момента.")
-else:
-    preds = predict(matches_df)
-    matches_df["Value %"] = (preds - 1 / matches_df["Коеф"]) * 100
-    matches_df = matches_df.sort_values(by="Value %", ascending=False)
-
-    st.subheader("Прогнозирани Value Залози")
+if not matches_df.empty:
+    st.write("Предстоящи мачове:")
     st.dataframe(matches_df)
+
+    # Предсказване на вероятности за value bet
+    try:
+        preds = predict(matches_df)
+        matches_df["Вероятност за value bet"] = preds
+        st.write("Мачове с вероятности за value bet:")
+        st.dataframe(matches_df.sort_values(by="Вероятност за value bet", ascending=False))
+    except Exception as e:
+        st.error(f"Грешка при прогнозиране: {e}")
+else:
+    st.info("Няма налични мачове за показване.")
