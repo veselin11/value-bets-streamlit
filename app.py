@@ -1,74 +1,56 @@
 import streamlit as st
 import pandas as pd
-import joblib
-from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import RandomForestClassifier
+import requests
+from predictor import predict, load_model
+from train_model import train_model
 
-# Функция за обучение на модела
-def train_model():
-    df = pd.read_csv("football_data.csv")
+API_URL = "https://api.example.com/matches"  # смени с твоя API URL
+API_KEY = "ТВОЯ_API_КЛЮЧ"  # сложи своя ключ тук
 
-    enc_team1 = LabelEncoder()
-    enc_team2 = LabelEncoder()
-    enc_league = LabelEncoder()
+def load_matches_from_api():
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    params = {"date": "2025-05-17"}  # или текуща дата, ако искаш динамично
 
-    df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
-    df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
-    df["Лига"] = enc_league.fit_transform(df["Лига"])
+    try:
+        response = requests.get(API_URL, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
 
-    X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    y = df["ValueBet"]
-
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
-
-    joblib.dump(model, "value_bet_model.pkl")
-    joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
-
-    st.success("✅ Моделът е обучен и записан успешно!")
-
-# Функция за зареждане на модела и енкодерите
-def load_model():
-    model = joblib.load("value_bet_model.pkl")
-    encoders = joblib.load("label_encoders.pkl")
-    return model, encoders
-
-# Функция за предсказване
-def predict(df_matches):
-    model, encoders = load_model()
-
-    df = df_matches.copy()
-    df["Отбор 1"] = encoders["team1"].transform(df["Отбор 1"])
-    df["Отбор 2"] = encoders["team2"].transform(df["Отбор 2"])
-    df["Лига"] = encoders["league"].transform(df["Лига"])
-
-    X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    df["Прогноза ValueBet"] = model.predict(X)
-    df["Вероятност ValueBet"] = model.predict_proba(X)[:,1]
-
-    return df
+        matches = []
+        for match in data["response"]:
+            matches.append({
+                "Отбор 1": match["team1_name"],
+                "Отбор 2": match["team2_name"],
+                "Лига": match["league_name"],
+                "Коеф": match["odds_home_win"]  # или друг коефициент, който ползваш
+            })
+        return pd.DataFrame(matches)
+    except Exception as e:
+        st.error(f"Грешка при зареждане на мачове: {e}")
+        return pd.DataFrame()
 
 def main():
     st.title("🎯 Value Bets Прогнози")
 
-    # Бутон за обучение
-    if st.button("Обучение на модела"):
-        with st.spinner("Обучение... Моля изчакайте"):
+    if st.button("Обучение на модел"):
+        with st.spinner("Обучавам модела..."):
             train_model()
+        st.success("Обучението е успешно!")
 
-    # Зареждане на мачове (пример)
-    # Тук трябва да сложиш твоя начин за зареждане на matches_df, примерно от API или CSV
+    matches_df = load_matches_from_api()
+    if matches_df.empty:
+        st.warning("Няма налични мачове за прогнозиране.")
+        return
+
+    st.write(f"Намерени мачове: {len(matches_df)}")
+    st.dataframe(matches_df)
+
     try:
-        matches_df = pd.read_csv("matches_to_predict.csv")  # примерно
-        st.write("Намерени мачове за прогнозиране:")
-        st.dataframe(matches_df.head())
-
-        if st.button("Прогноза за стойностни залози"):
-            results_df = predict(matches_df)
-            st.write("Прогнози:")
-            st.dataframe(results_df)
+        results_df = predict(matches_df)
+        st.write("Прогнози за Value Bets:")
+        st.dataframe(results_df)
     except Exception as e:
-        st.error(f"Грешка при зареждане на мачове или правене на прогноза: {e}")
+        st.error(f"Грешка при прогнозиране: {e}")
 
 if __name__ == "__main__":
     main()
