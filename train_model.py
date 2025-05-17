@@ -4,9 +4,21 @@ from sklearn.ensemble import RandomForestClassifier
 import joblib
 
 def train_model():
-    df = pd.read_csv("football_data.csv")
+    try:
+        df = pd.read_csv("football_data.csv")
+    except FileNotFoundError:
+        print("Грешка: Файлът football_data.csv не е намерен.")
+        return
+    except Exception as e:
+        print(f"Грешка при зареждане на данните: {e}")
+        return
 
-    # Ако липсва колоната ValueBet, създай я с примерна логика
+    required_cols = ["Отбор 1", "Отбор 2", "Лига", "Коеф"]
+    for col in required_cols:
+        if col not in df.columns:
+            print(f"Грешка: Липсва колона '{col}' в данните.")
+            return
+
     if "ValueBet" not in df.columns:
         df["ValueBet"] = (df["Коеф"] > 2.0).astype(int)
 
