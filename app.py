@@ -2,6 +2,14 @@ import streamlit as st
 import pandas as pd
 from data_loader import load_upcoming_matches
 from predictor import predict
+import streamlit as st
+from train_model import train
+
+st.title("Value Bets Прогнози")
+
+if st.button("🔄 Преобучи модела"):
+    train()
+    st.success("✅ Моделът и енкодерите са преобучени!")
 
 st.title("Value Bet Predictor")
 
