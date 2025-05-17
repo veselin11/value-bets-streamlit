@@ -2,18 +2,13 @@ import streamlit as st
 import datetime
 from data_loader import load_matches_from_api
 from predictor import predict
-from train_model import train_model
+from train_model import train_model  # ако имаш
 
 BANKROLL_DEFAULT = 500
 
-def calculate_stake(value, bankroll):
-    base_stake = bankroll * 0.05
-    stake = base_stake * value
-    return min(stake, bankroll * 0.1)
-
 def main():
     st.sidebar.title("Настройки")
-    bankroll = st.sidebar.number_input("Начална банка (лв)", value=BANKROLL_DEFAULT, step=50)
+    bankroll = st.sidebar.number_input("Текуща банка (лв)", value=BANKROLL_DEFAULT, step=50)
     date_to_load = st.sidebar.date_input("Дата за мачове", value=datetime.date.today())
 
     st.title("🎯 Value Bets Прогнози")
@@ -33,14 +28,13 @@ def main():
     st.dataframe(matches_df)
 
     try:
-        preds_df = predict(matches_df)
-        if "value" not in preds_df.columns:
-            st.error("Прогнозите нямат колона 'value'. Проверете функцията predict.")
+        preds_df = predict(matches_df, bankroll)
+        if preds_df.empty:
+            st.info("Няма намерени стойностни залози за тази дата и банка.")
             return
-        preds_df["Предложена сума за залог (лв)"] = preds_df["value"].apply(lambda v: calculate_stake(v, bankroll))
 
         st.write("Прогнози за Value Bets:")
-        st.dataframe(preds_df)
+        st.dataframe(preds_df[["Отбор 1", "Отбор 2", "Лига", "Коеф", "value", "Залог (лв)"]])
     except Exception as e:
         st.error(f"Грешка при прогнозиране: {e}")
 
