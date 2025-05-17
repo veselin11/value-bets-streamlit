@@ -2,59 +2,59 @@ import requests
 import pandas as pd
 from datetime import date
 
-API_KEY = "685e423d2d9e078e7c5f7f9439e77f7c"  # замени с реален ключ
-API_URL = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+API_KEY = "685e423d2d9e078e7c5f7f9439e77f7c"  # Тук смени с твоя ключ
+API_URL = "https://v3.football.api-sports.io/fixtures"
 
-headers = {
-    "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
-    "x-rapidapi-key": API_KEY,
+HEADERS = {
+    "x-apisports-key": API_KEY
 }
 
-def load_matches_from_api(selected_date: date) -> pd.DataFrame:
-    params = {"date": selected_date.strftime("%Y-%m-%d")}
-    try:
-        response = requests.get(API_URL, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+def load_matches_from_api(selected_date: date):
+    params = {
+        "date": selected_date.isoformat(),
+        "season": "2024"
+    }
 
-        matches = []
-        for fixture in data["response"]:
-            match = fixture["fixture"]
-            league = fixture["league"]["name"]
-            teams = fixture["teams"]
-            odds = fixture.get("odds", [])
+    response = requests.get(API_URL, headers=HEADERS, params=params)
+    data = response.json()
 
-            # Ако няма коефициенти, пропускаме
-            if not odds or not odds[0].get("bookmakers"):
-                continue
-
-            # Взимаме коефициент за 1X2 от първия букмейкър
-            bookmakers = odds[0]["bookmakers"]
-            if not bookmakers:
-                continue
-            markets = bookmakers[0].get("markets", [])
-            if not markets:
-                continue
-            # Търсим 1X2 пазар
-            market_1x2 = next((m for m in markets if m["key"] == "h2h"), None)
-            if not market_1x2:
-                continue
-            outcomes = market_1x2.get("outcomes", [])
-            # Коефициент за домакин (home team win)
-            home_odds = next((o["price"] for o in outcomes if o["name"] == teams["home"]["name"]), None)
-            if home_odds is None:
-                continue
-
-            matches.append({
-                "Отбор 1": teams["home"]["name"],
-                "Отбор 2": teams["away"]["name"],
-                "Лига": league,
-                "Коеф": home_odds,
-                "Дата": pd.to_datetime(match["date"]).date()
-            })
-
-        df = pd.DataFrame(matches)
-        return df[df["Дата"] == selected_date]
-    except Exception as e:
-        print(f"Грешка при зареждане от API: {e}")
+    if not data.get("response"):
         return pd.DataFrame()
+
+    rows = []
+    for fixture in data["response"]:
+        teams = fixture["teams"]
+        odds = fixture.get("odds")
+        if not odds or not odds[0]["bookmakers"]:
+            continue
+
+        bookmaker = odds[0]["bookmakers"][0]
+        markets = bookmaker["markets"]
+        market = next((m for m in markets if m["key"] == "h2h"), None)
+        if not market:
+            continue
+
+        outcomes = market["outcomes"]
+
+        home_odd = away_odd = draw_odd = None
+        for outcome in outcomes:
+            if outcome["name"] == teams["home"]["name"]:
+                home_odd = outcome["price"]
+            elif outcome["name"] == teams["away"]["name"]:
+                away_odd = outcome["price"]
+            elif outcome["name"].lower() in ["draw", "равен"]:
+                draw_odd = outcome["price"]
+
+        if home_odd is None:
+            continue
+
+        rows.append({
+            "Отбор 1": teams["home"]["name"],
+            "Отбор 2": teams["away"]["name"],
+            "Лига": fixture["league"]["name"],
+            "Коеф": home_odd,  # Можеш да добавиш още пазари, ако искаш
+            "Дата": pd.to_datetime(fixture["fixture"]["date"]).date()
+        })
+
+    df = pd.DataFrame(rows)
+    return df[df["Дата"] == selected_date]
