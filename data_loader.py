@@ -6,58 +6,32 @@ API_KEY = "685e423d2d9e078e7c5f7f9439e77f7c"
 API_URL = "https://v3.football.api-sports.io/fixtures"
 
 HEADERS = {
-    'x-apisports-key': API_KEY
+    "x-apisports-key": API_KEY
 }
 
 def load_matches_from_api(selected_date: date):
     try:
         params = {
-            'date': selected_date.isoformat(),
-            # Може да добавиш още филтри, напр. 'league' или 'season'
+            "date": selected_date.strftime("%Y-%m-%d"),
+            "season": "2024",
+            # Можеш да добавиш филтри по лиги тук, ако искаш
         }
         response = requests.get(API_URL, headers=HEADERS, params=params)
+        response.raise_for_status()
         data = response.json()
 
-        if not data['response']:
-            print(f"Няма мачове за дата {selected_date}")
-            return pd.DataFrame()
-
         matches = []
-        for item in data['response']:
-            fixture = item['fixture']
-            league = item['league']['name']
-            teams = item['teams']
-            odds = item.get('odds', [])
-
-            # Опитваме се да вземем коефициенти на пазара 1X2 (ако има)
-            coef = None
-            for bookie in item.get('bookmakers', []):
-                for market in bookie['bets']:
-                    if market['name'] == 'Match Winner':
-                        # Взимаме коефициенти за домакин, равен, гост
-                        for val in market['values']:
-                            if val['value'] == 'Home':
-                                coef = val['odd']
-                                break
-                        if coef:
-                            break
-                if coef:
-                    break
-
-            if coef is None:
-                # Ако няма коефициент, пропускаме
-                continue
-
-            matches.append({
-                "Отбор 1": teams['home']['name'],
-                "Отбор 2": teams['away']['name'],
-                "Лига": league,
-                "Коеф": float(coef),
-                "Дата": pd.to_datetime(fixture['date']).date()
-            })
+        for fixture in data.get("response", []):
+            match = {
+                "Отбор 1": fixture["teams"]["home"]["name"],
+                "Отбор 2": fixture["teams"]["away"]["name"],
+                "Лига": fixture["league"]["name"],
+                "Коеф": fixture["bookmakers"][0]["bets"][0]["values"][0]["odd"] if fixture["bookmakers"] else 1.0,
+                "Дата": pd.to_datetime(fixture["fixture"]["date"]).date(),
+            }
+            matches.append(match)
 
         df = pd.DataFrame(matches)
-        print(f"Заредени {len(df)} мача от API за дата {selected_date}")
         return df
 
     except Exception as e:
