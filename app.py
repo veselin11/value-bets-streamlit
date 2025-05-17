@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 
 # Конфигурация
-API_TOKEN = "3f4f45e91bf146f8b1b425cd1a4b88cc"
+API_TOKEN = "685e423d2d9e078e7c5f7f9439e77f7c"
 BASE_URL = "https://api.football-data.org/v4"
 
 headers = {"X-Auth-Token": API_TOKEN}
