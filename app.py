@@ -1,76 +1,50 @@
 import streamlit as st
 import requests
-from datetime import datetime
 import pandas as pd
+from datetime import datetime
 
-API_TOKEN = "YOUR_FOOTBALL_DATA_API_TOKEN"  # Тук сложи твоя football-data.org ключ
-ODDS_API_TOKEN = "34fd7e0b821f644609d4fac44e3bc30f228e8dc0040b9f0c79aeef702c0f267f"  # Твоят OddsAPI ключ
+# Задай своя API ключ от allsportsapi.com тук
+API_KEY = "34fd7e0b821f644609d4fac44e3bc30f228e8dc0040b9f0c79aeef702c0f267f"
 
-FOOTBALL_API_URL = "https://api.football-data.org/v4"
-ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+BASE_URL = "https://allsportsapi.com/api/football/"
 
-headers_football = {"X-Auth-Token": API_TOKEN}
-params_odds = {
-    "apiKey": ODDS_API_TOKEN,
-    "regions": "eu",
-    "markets": "h2h",  # 1X2 залози
-    "oddsFormat": "decimal",
-    "dateFormat": "iso"
-}
-
-st.title("Value Bets с Реални Коефициенти")
-
-if st.button("Зареди мачове с коефициенти за днес"):
+def get_fixtures_for_today(api_key):
     today = datetime.today().strftime('%Y-%m-%d')
-
-    # Зареждаме мачовете от football-data.org
-    response = requests.get(
-        f"{FOOTBALL_API_URL}/matches?dateFrom={today}&dateTo={today}", headers=headers_football
-    )
+    params = {
+        "met": "Fixtures",
+        "APIkey": api_key,
+        "from": today,
+        "to": today
+    }
+    response = requests.get(BASE_URL, params=params)
     if response.status_code != 200:
         st.error(f"Грешка при зареждане на мачове: {response.status_code}")
-        st.stop()
+        return pd.DataFrame()
 
-    matches = response.json().get("matches", [])
+    data = response.json()
+    if "result" not in data:
+        st.error("Няма налични мачове или грешка в API отговора.")
+        return pd.DataFrame()
 
-    # Зареждаме коефициенти от OddsAPI
-    odds_response = requests.get(ODDS_API_URL, params=params_odds)
-    if odds_response.status_code != 200:
-        st.warning("Неуспешно зареждане на коефициенти, ще покажем без тях.")
-        odds_data = []
-    else:
-        odds_data = odds_response.json()
-
+    matches = data["result"]
     rows = []
-    for match in matches:
-        home = match["homeTeam"]["name"]
-        away = match["awayTeam"]["name"]
-        status = match["status"]
-
-        coef_1 = coef_x = coef_2 = None
-        for odd in odds_data:
-            if odd["home_team"] == home and odd["away_team"] == away:
-                for bookmaker in odd["bookmakers"]:
-                    for market in bookmaker["markets"]:
-                        if market["key"] == "h2h":
-                            coef_1 = market["outcomes"][0]["price"]
-                            coef_x = market["outcomes"][1]["price"]
-                            coef_2 = market["outcomes"][2]["price"]
-                            break
-                    if coef_1 is not None:
-                        break
-            if coef_1 is not None:
-                break
-
+    for m in matches:
         rows.append({
-            "Час": match["utcDate"][11:16],
-            "Домакин": home,
-            "Гост": away,
-            "Статус": status,
-            "Коеф. 1": coef_1 if coef_1 else "-",
-            "Коеф. X": coef_x if coef_x else "-",
-            "Коеф. 2": coef_2 if coef_2 else "-",
+            "Час": m.get("match_time", ""),
+            "Дата": m.get("event_date", ""),
+            "Домакин": m.get("event_home_team", ""),
+            "Гост": m.get("event_away_team", ""),
+            "Лига": m.get("league_name", ""),
+            "Статус": m.get("event_status", ""),
         })
+    return pd.DataFrame(rows)
 
-    df = pd.DataFrame(rows)
-    st.dataframe(df)
+
+st.title("Value Bets с allsportsapi.com")
+
+if st.button("Зареди мачове за днес"):
+    df_matches = get_fixtures_for_today(API_KEY)
+    if not df_matches.empty:
+        st.dataframe(df_matches)
+    else:
+        st.info("Няма мачове за днес или проблем с API.")
