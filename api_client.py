@@ -1,11 +1,13 @@
 import os
 import streamlit as st
+import requests
+import pandas as pd
 
-API_KEY = os.getenv("API_KEY") or st.secrets.get("API_KEY")
+# Зареждане на API ключ от secrets или променливи на средата
+API_KEY = st.secrets["API_KEY"] if "API_KEY" in st.secrets else os.getenv("API_KEY")
 
 if not API_KEY:
-    raise ValueError("Не е зададен API_KEY в средата или в secrets!")
-
+    raise ValueError("Не е зададен API_KEY в Streamlit secrets или променливите на средата!")
 
 BASE_URL = "https://v3.football.api-sports.io"
 
@@ -16,28 +18,27 @@ headers = {
 
 def get_upcoming_matches(league_ids=[39, 140], count=10):
     matches = []
-
     url = f"{BASE_URL}/fixtures?next={count}"
     res = requests.get(url, headers=headers)
+
     if res.status_code != 200:
-        print(f"Грешка при заявка към API: {res.status_code}")
+        st.error(f"Грешка при заявка към API: {res.status_code}")
         return pd.DataFrame()
 
     data = res.json().get("response", [])
     for match in data:
+        league_id = match["league"]["id"]
+        if league_id not in league_ids:
+            continue
         try:
-            team1 = match["teams"]["home"]["name"]
-            team2 = match["teams"]["away"]["name"]
-            league = match["league"]["name"]
-            date = match["fixture"]["date"][:10]
             matches.append({
-                "Отбор 1": team1,
-                "Отбор 2": team2,
-                "Лига": league,
-                "Дата": date,
-                "Коеф": 2.5  # Фиктивен коефициент за сега
+                "Отбор 1": match["teams"]["home"]["name"],
+                "Отбор 2": match["teams"]["away"]["name"],
+                "Лига": match["league"]["name"],
+                "Дата": match["fixture"]["date"][:10],
+                "Коеф": 2.5  # фиктивен коефициент, може да го заменим с реален при нужда
             })
-        except Exception:
+        except:
             continue
 
     return pd.DataFrame(matches)
