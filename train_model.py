@@ -1,35 +1,26 @@
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
 import joblib
 
-def train():
-    data = pd.read_csv("football_data.csv")
-    
-    # Енкодване на категориалните колони
-    le_team1 = LabelEncoder()
-    le_team2 = LabelEncoder()
-    le_league = LabelEncoder()
-    
-    data["Отбор 1"] = le_team1.fit_transform(data["Отбор 1"])
-    data["Отбор 2"] = le_team2.fit_transform(data["Отбор 2"])
-    data["Лига"] = le_league.fit_transform(data["Лига"])
+# Зареждаме данни
+df = pd.read_csv("football_data.csv")
 
-    # Запазваме енкодерите
-    encoders = {
-        "team1": le_team1,
-        "team2": le_team2,
-        "league": le_league
-    }
-    joblib.dump(encoders, "label_encoders.pkl")
+# Създаваме енкодери
+enc_team1 = LabelEncoder()
+enc_team2 = LabelEncoder()
+enc_league = LabelEncoder()
 
-    X = data.drop("target", axis=1)
-    y = data["target"]
+df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
+df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
+df["Лига"] = enc_league.fit_transform(df["Лига"])
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
+X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
+y = df["ValueBet"]  # колона с етикети 0/1
 
-    joblib.dump(model, "value_bet_model.pkl")
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X, y)
 
-if __name__ == "__main__":
-    train()
+# Записваме модел и енкодери
+joblib.dump(model, "value_bet_model.pkl")
+joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
