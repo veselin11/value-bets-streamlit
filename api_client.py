@@ -1,10 +1,11 @@
 import os
-import requests
-import pandas as pd
+import streamlit as st
 
-API_KEY = os.getenv("API_KEY")
+API_KEY = os.getenv("API_KEY") or st.secrets.get("API_KEY")
+
 if not API_KEY:
-    raise ValueError("Не е зададен API_KEY в средата на изпълнение!")
+    raise ValueError("Не е зададен API_KEY в средата или в secrets!")
+
 
 BASE_URL = "https://v3.football.api-sports.io"
 
