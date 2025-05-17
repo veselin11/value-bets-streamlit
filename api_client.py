@@ -1,9 +1,12 @@
+import os
 import requests
 import pandas as pd
-import streamlit as st
+
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise ValueError("Не е зададен API_KEY в средата на изпълнение!")
 
 BASE_URL = "https://v3.football.api-sports.io"
-API_KEY = st.secrets["API_KEY"]
 
 headers = {
     "X-RapidAPI-Key": API_KEY,
@@ -11,17 +14,12 @@ headers = {
 }
 
 def get_upcoming_matches(league_ids=[39, 140], count=10):
-    """
-    Връща предстоящи мачове от избрани лиги.
-    league_ids: Списък с ID на лиги (напр. 39 = Premier League, 140 = La Liga)
-    count: Колко мача напред да се вземат
-    """
     matches = []
 
     url = f"{BASE_URL}/fixtures?next={count}"
     res = requests.get(url, headers=headers)
     if res.status_code != 200:
-        st.error(f"Грешка при заявка към API: {res.status_code}")
+        print(f"Грешка при заявка към API: {res.status_code}")
         return pd.DataFrame()
 
     data = res.json().get("response", [])
@@ -36,9 +34,9 @@ def get_upcoming_matches(league_ids=[39, 140], count=10):
                 "Отбор 2": team2,
                 "Лига": league,
                 "Дата": date,
-                "Коеф": 2.5  # Задаваме фиктивен коефициент (ще го заменим с реален)
+                "Коеф": 2.5  # Фиктивен коефициент за сега
             })
-        except Exception as e:
+        except Exception:
             continue
 
     return pd.DataFrame(matches)
