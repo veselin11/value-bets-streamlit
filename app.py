@@ -1,48 +1,49 @@
 import streamlit as st
-import datetime
-from data_loader import load_matches_from_api
-from predictor import predict
-from train_model import train_model
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import joblib
 
-BANKROLL_DEFAULT = 500
+# Функция за зареждане на данни (пример с CSV)
+@st.cache_data
+def load_data(path="value_bets_data.csv"):
+    df = pd.read_csv(path)
+    return df
 
-def calculate_stake(value, bankroll):
-    base_stake = bankroll * 0.05
-    stake = base_stake * value
-    return min(stake, bankroll * 0.1)
+# Функция за подготовка на данните и обучение на модел
+def train_model(df):
+    # Тук трябва да избереш кои колони ще са признаци и кое е таргета
+    # Например:
+    X = df.drop(columns=['target'])  # замени 'target' с името на колоната за цел
+    y = df['target']
 
-def main():
-    st.sidebar.title("Настройки")
-    bankroll = st.sidebar.number_input("Начална банка (лв)", value=BANKROLL_DEFAULT, step=50)
-    date_to_load = st.sidebar.date_input("Дата за мачове", value=datetime.date.today())
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    st.title("🎯 Value Bets Прогнози")
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
 
-    if st.button("Обучение на модел"):
-        with st.spinner("Обучавам модела..."):
-            train_model()
-        st.success("Обучението е успешно!")
+    preds = model.predict(X_test)
+    acc = accuracy_score(y_test, preds)
 
-    matches_df = load_matches_from_api(date_to_load)
+    # Запазваме модела локално (ако искаш)
+    joblib.dump(model, 'value_bet_model.pkl')
 
-    if matches_df.empty:
-        st.warning("Няма налични мачове за прогнозиране.")
-        return
+    return model, acc
 
-    st.write(f"Намерени мачове: {len(matches_df)}")
-    st.dataframe(matches_df)
+# Streamlit UI
+st.title("Value Bets - Обучение на Модел")
 
-    try:
-        preds_df = predict(matches_df)
-        if "value" not in preds_df.columns:
-            st.error("Прогнозите нямат колона 'value'. Проверете функцията predict.")
-            return
-        preds_df["Предложена сума за залог (лв)"] = preds_df["value"].apply(lambda v: calculate_stake(v, bankroll))
+# Зареждаме данните
+df = load_data()
 
-        st.write("Прогнози за Value Bets:")
-        st.dataframe(preds_df)
-    except Exception as e:
-        st.error(f"Грешка при прогнозиране: {e}")
+st.write("Данни за обучение:")
+st.dataframe(df.head())
 
-if __name__ == "__main__":
-    main()
+# Бутон за обучение
+if st.button("Обучи модел"):
+    with st.spinner("Обучение в процес..."):
+        model, accuracy = train_model(df)
+    st.success(f"Обучението приключи! Точност на модела: {accuracy:.2%}")
+    # Запазваме модела в сесията
+    st.session_state['model'] = model
