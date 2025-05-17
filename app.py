@@ -1,17 +1,24 @@
 import streamlit as st
-from data_loader import load_upcoming_matches
-from predictor import load_model, predict_value_bet
 import pandas as pd
+from data_loader import load_upcoming_matches
+from predictor import predict
 
 st.title("Value Bet Predictor")
 
-model = load_model()
-matches = load_upcoming_matches()
+# Зареждаме предстоящите мачове
+matches_df = load_upcoming_matches()
 
-st.header("Предстоящи мачове")
-st.dataframe(matches)
+st.write("### Предстоящи мачове:")
+st.dataframe(matches_df)
 
-if st.button("Прогнозирай стойностните залози"):
-    preds = predict_value_bet(model, matches)
-    matches["Вероятност за печалба"] = preds
-    st.dataframe(matches)
+# Ако има мачове, правим прогноза
+if not matches_df.empty:
+    preds = predict(matches_df)
+
+    # Добавяме колоната с вероятности към таблицата
+    matches_df["Вероятност за value bet"] = preds
+
+    st.write("### Прогнози:")
+    st.dataframe(matches_df)
+else:
+    st.write("Няма налични мачове за прогноза.")
