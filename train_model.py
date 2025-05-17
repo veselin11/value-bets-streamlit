@@ -24,3 +24,5 @@ model.fit(X, y)
 # Записваме модел и енкодери
 joblib.dump(model, "value_bet_model.pkl")
 joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
+
+print("Моделът е обучен и записан успешно.")
