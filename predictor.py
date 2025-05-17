@@ -1,31 +1,29 @@
 import pandas as pd
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
 import joblib
-import numpy as np
 
-def predict(matches_df):
-    model = joblib.load("value_bet_model.pkl")
-    encoders = joblib.load("label_encoders.pkl")
+def train_model():
+    df = pd.read_csv("football_data.csv")
 
-    df = matches_df.copy()
+    if "ValueBet" not in df.columns:
+        df["ValueBet"] = (df["Коеф"] > 2.0).astype(int)
 
-    def extend_encoder(encoder, values):
-        known = set(encoder.classes_)
-        unknown = set(values) - known
-        if unknown:
-            encoder.classes_ = np.array(list(encoder.classes_) + list(unknown))
-        return encoder
+    enc_team1 = LabelEncoder()
+    enc_team2 = LabelEncoder()
+    enc_league = LabelEncoder()
 
-    enc_team1 = extend_encoder(encoders["team1"], df["Отбор 1"])
-    enc_team2 = extend_encoder(encoders["team2"], df["Отбор 2"])
-    enc_league = extend_encoder(encoders["league"], df["Лига"])
-
-    df["Отбор 1"] = enc_team1.transform(df["Отбор 1"])
-    df["Отбор 2"] = enc_team2.transform(df["Отбор 2"])
-    df["Лига"] = enc_league.transform(df["Лига"])
+    df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
+    df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
+    df["Лига"] = enc_league.fit_transform(df["Лига"])
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    preds = model.predict_proba(X)[:, 1]
+    y = df["ValueBet"]
 
-    results = matches_df.copy()
-    results["value"] = preds
-    return results[results["value"] > 0.5].sort_values(by="value", ascending=False)
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+
+    joblib.dump(model, "value_bet_model.pkl")
+    joblib.dump({"team1": enc_team1, "team2": enc_team2, "league": enc_league}, "label_encoders.pkl")
+
+    print("Моделът е обучен и записан успешно.")
