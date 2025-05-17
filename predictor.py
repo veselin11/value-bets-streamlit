@@ -1,19 +1,19 @@
 import pandas as pd
 import joblib
+import numpy as np
 
 def predict(matches_df):
     model = joblib.load("value_bet_model.pkl")
     encoders = joblib.load("label_encoders.pkl")
 
-    # Копие, за да запазим оригиналните имена
     df = matches_df.copy()
 
-    # Добавяне на липсващи етикети към енкодерите
+    # Функция за добавяне на нови стойности в енкодера
     def extend_encoder(encoder, values):
         known = set(encoder.classes_)
         unknown = set(values) - known
         if unknown:
-            encoder.classes_ = list(encoder.classes_) + list(unknown)
+            encoder.classes_ = np.array(list(encoder.classes_) + list(unknown))
         return encoder
 
     enc_team1 = extend_encoder(encoders["team1"], df["Отбор 1"])
@@ -25,7 +25,7 @@ def predict(matches_df):
     df["Лига"] = enc_league.transform(df["Лига"])
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    preds = model.predict_proba(X)[:, 1]  # вероятност за ValueBet == 1
+    preds = model.predict_proba(X)[:, 1]
 
     results = matches_df.copy()
     results["value"] = preds
