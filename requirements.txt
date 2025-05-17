@@ -1,9 +1,4 @@
 streamlit
 pandas
-matplotlib
-XlsxWriter
 scikit-learn
-requests
-numpy
-seaborn
-streamlit-aggrid
+joblib
