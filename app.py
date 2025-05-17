@@ -2,61 +2,75 @@ import streamlit as st
 import requests
 from datetime import datetime
 import pandas as pd
-import os
 
-# --- Функция за зареждане на мачове от API ---
-def get_upcoming_matches(date: str):
-    API_KEY = os.getenv("API_KEY")  # Прочита API ключ от средата
-    if not API_KEY:
-        st.error("Не е зададен API_KEY в средата на изпълнение!")
-        return pd.DataFrame()
+API_TOKEN = "YOUR_FOOTBALL_DATA_API_TOKEN"  # Тук сложи твоя football-data.org ключ
+ODDS_API_TOKEN = "34fd7e0b821f644609d4fac44e3bc30f228e8dc0040b9f0c79aeef702c0f267f"  # Твоят OddsAPI ключ
 
-    BASE_URL = "https://v3.football.api-sports.io"
-    headers = {
-        "X-RapidAPI-Key": API_KEY,
-        "X-RapidAPI-Host": "v3.football.api-sports.io"
-    }
-    url = f"{BASE_URL}/fixtures?date={date}"
-    res = requests.get(url, headers=headers)
+FOOTBALL_API_URL = "https://api.football-data.org/v4"
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
 
-    if res.status_code != 200:
-        st.error(f"Грешка при заявка към API: {res.status_code}")
-        return pd.DataFrame()
+headers_football = {"X-Auth-Token": API_TOKEN}
+params_odds = {
+    "apiKey": ODDS_API_TOKEN,
+    "regions": "eu",
+    "markets": "h2h",  # 1X2 залози
+    "oddsFormat": "decimal",
+    "dateFormat": "iso"
+}
 
-    data = res.json()
-    matches = []
-    for match in data.get("response", []):
-        try:
-            matches.append({
-                "Отбор 1": match["teams"]["home"]["name"],
-                "Отбор 2": match["teams"]["away"]["name"],
-                "Лига": match["league"]["name"],
-                "Дата": match["fixture"]["date"][:10],
-                "Коеф. (фиктивен)": 2.5  # може да добавиш реални коефициенти
-            })
-        except Exception as e:
-            continue
-    return pd.DataFrame(matches)
+st.title("Value Bets с Реални Коефициенти")
 
-# --- Streamlit app ---
-st.set_page_config(page_title="Value Bets App", layout="wide")
-st.title("Value Bets - Стойностни Залози")
+if st.button("Зареди мачове с коефициенти за днес"):
+    today = datetime.today().strftime('%Y-%m-%d')
 
-tab1, tab2, tab3 = st.tabs(["Прогнози", "Резултати", "Статистика"])
+    # Зареждаме мачовете от football-data.org
+    response = requests.get(
+        f"{FOOTBALL_API_URL}/matches?dateFrom={today}&dateTo={today}", headers=headers_football
+    )
+    if response.status_code != 200:
+        st.error(f"Грешка при зареждане на мачове: {response.status_code}")
+        st.stop()
 
-with tab1:
-    st.subheader("Стойностни Прогнози за Днес")
-    if st.button("Зареди мачовете за днес"):
-        today = datetime.today().strftime("%Y-%m-%d")
-        df_matches = get_upcoming_matches(today)
-        if df_matches.empty:
-            st.info("Няма налични мачове за днес или грешка при зареждане.")
-        else:
-            st.dataframe(df_matches)
+    matches = response.json().get("matches", [])
 
-with tab2:
-    st.subheader("Резултати (в бъдеще)")
+    # Зареждаме коефициенти от OddsAPI
+    odds_response = requests.get(ODDS_API_URL, params=params_odds)
+    if odds_response.status_code != 200:
+        st.warning("Неуспешно зареждане на коефициенти, ще покажем без тях.")
+        odds_data = []
+    else:
+        odds_data = odds_response.json()
 
-with tab3:
-    st.subheader("Обобщена статистика")
-    st.info("Тук ще се визуализират: ROI, успеваемост, печалба и графики.")
+    rows = []
+    for match in matches:
+        home = match["homeTeam"]["name"]
+        away = match["awayTeam"]["name"]
+        status = match["status"]
+
+        coef_1 = coef_x = coef_2 = None
+        for odd in odds_data:
+            if odd["home_team"] == home and odd["away_team"] == away:
+                for bookmaker in odd["bookmakers"]:
+                    for market in bookmaker["markets"]:
+                        if market["key"] == "h2h":
+                            coef_1 = market["outcomes"][0]["price"]
+                            coef_x = market["outcomes"][1]["price"]
+                            coef_2 = market["outcomes"][2]["price"]
+                            break
+                    if coef_1 is not None:
+                        break
+            if coef_1 is not None:
+                break
+
+        rows.append({
+            "Час": match["utcDate"][11:16],
+            "Домакин": home,
+            "Гост": away,
+            "Статус": status,
+            "Коеф. 1": coef_1 if coef_1 else "-",
+            "Коеф. X": coef_x if coef_x else "-",
+            "Коеф. 2": coef_2 if coef_2 else "-",
+        })
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df)
