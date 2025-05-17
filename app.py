@@ -4,12 +4,12 @@ from data_loader import load_matches_from_api
 from predictor import predict
 from train_model import train_model
 
-BANKROLL_DEFAULT = 500  # начална банка по подразбиране
+BANKROLL_DEFAULT = 500
 
 def calculate_stake(value, bankroll):
-    base_stake = bankroll * 0.05  # 5% от банката максимално
-    stake = base_stake * value    # пропорционално на value
-    return min(stake, bankroll * 0.1)  # максимум 10% от банката
+    base_stake = bankroll * 0.05
+    stake = base_stake * value
+    return min(stake, bankroll * 0.1)
 
 def main():
     st.sidebar.title("Настройки")
@@ -32,13 +32,11 @@ def main():
     st.dataframe(matches_df)
 
     try:
-        preds = predict(matches_df)
-        results_df = matches_df.copy()
-        results_df["value"] = preds
-        results_df["Предложена сума за залог (лв)"] = results_df["value"].apply(lambda v: calculate_stake(v, bankroll))
+        preds_df = predict(matches_df)
+        preds_df["Предложена сума за залог (лв)"] = preds_df["value"].apply(lambda v: calculate_stake(v, bankroll))
 
         st.write("Прогнози за Value Bets:")
-        st.dataframe(results_df)
+        st.dataframe(preds_df)
     except Exception as e:
         st.error(f"Грешка при прогнозиране: {e}")
 
