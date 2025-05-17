@@ -1,14 +1,12 @@
-import pandas as pd
 import joblib
 import numpy as np
 
-def predict(matches_df):
+def predict(matches_df, bankroll=500, value_threshold=0.05):
     model = joblib.load("value_bet_model.pkl")
     encoders = joblib.load("label_encoders.pkl")
 
     df = matches_df.copy()
 
-    # Функция за добавяне на нови стойности в енкодера
     def extend_encoder(encoder, values):
         known = set(encoder.classes_)
         unknown = set(values) - known
@@ -27,6 +25,18 @@ def predict(matches_df):
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
     preds = model.predict_proba(X)[:, 1]
 
-    results = matches_df.copy()
-    results["value"] = preds
-    return results[results["value"] > 0.5].sort_values(by="value", ascending=False)
+    # Изчисляваме value
+    value = preds - 1 / df["Коеф"]
+    df["value"] = value
+
+    # Филтрираме само с value > праг
+    df = df[df["value"] > value_threshold].copy()
+
+    def calculate_stake(value, bankroll, max_fraction=0.05):
+        base_stake = bankroll * max_fraction
+        stake = base_stake * value
+        return min(stake, bankroll * 0.1)
+
+    df["Залог (лв)"] = df["value"].apply(lambda v: calculate_stake(v, bankroll))
+
+    return df.sort_values(by="value", ascending=False)
