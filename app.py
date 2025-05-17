@@ -24,6 +24,7 @@ def main():
         st.success("Обучението е успешно!")
 
     matches_df = load_matches_from_api(date_to_load)
+
     if matches_df.empty:
         st.warning("Няма налични мачове за прогнозиране.")
         return
@@ -33,6 +34,9 @@ def main():
 
     try:
         preds_df = predict(matches_df)
+        if "value" not in preds_df.columns:
+            st.error("Прогнозите нямат колона 'value'. Проверете функцията predict.")
+            return
         preds_df["Предложена сума за залог (лв)"] = preds_df["value"].apply(lambda v: calculate_stake(v, bankroll))
 
         st.write("Прогнози за Value Bets:")
