@@ -10,13 +10,13 @@ def predict(matches_df):
 
     def encode_with_unseen(encoder, values):
         classes = set(encoder.classes_)
-        # Ако стойностите не са в класовете, заместете с -1
         encoded = []
         for v in values:
             if v in classes:
                 encoded.append(encoder.transform([v])[0])
             else:
-                encoded.append(-1)  # или някаква фиктивна стойност
+                # За unseen стойности подаваме -1
+                encoded.append(-1)
         return np.array(encoded)
 
     df["Отбор 1"] = encode_with_unseen(encoders["team1"], df["Отбор 1"])
@@ -25,13 +25,13 @@ def predict(matches_df):
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
 
-    # Ако моделът не може да работи с -1 стойности (тъй като RandomForest може), 
-    # можеш да ги замениш с най-често срещаната стойност или 0.
-    # Пример:
+    # Ако моделът не приема -1, замени с 0 или най-често срещана стойност
     X = X.replace(-1, 0)
 
     preds = model.predict_proba(X)[:, 1]
 
     results = matches_df.copy()
     results["value"] = preds
+
+    # Връщаме само с висока вероятност за value bet (>0.5)
     return results[results["value"] > 0.5].sort_values(by="value", ascending=False)
