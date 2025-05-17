@@ -1,7 +1,7 @@
 import joblib
 import numpy as np
 
-def predict(matches_df, bankroll=500, value_threshold=0.05):
+def predict(matches_df):
     model = joblib.load("value_bet_model.pkl")
     encoders = joblib.load("label_encoders.pkl")
 
@@ -23,20 +23,11 @@ def predict(matches_df, bankroll=500, value_threshold=0.05):
     df["Лига"] = enc_league.transform(df["Лига"])
 
     X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    preds = model.predict_proba(X)[:, 1]
 
-    # Изчисляваме value
-    value = preds - 1 / df["Коеф"]
+    preds_proba = model.predict_proba(X)[:, 1]
+
+    value = preds_proba * df["Коеф"] - 1
+
     df["value"] = value
 
-    # Филтрираме само с value > праг
-    df = df[df["value"] > value_threshold].copy()
-
-    def calculate_stake(value, bankroll, max_fraction=0.05):
-        base_stake = bankroll * max_fraction
-        stake = base_stake * value
-        return min(stake, bankroll * 0.1)
-
-    df["Залог (лв)"] = df["value"].apply(lambda v: calculate_stake(v, bankroll))
-
-    return df.sort_values(by="value", ascending=False)
+    return df[df["value"] > 0].sort_values(by="value", ascending=False)
