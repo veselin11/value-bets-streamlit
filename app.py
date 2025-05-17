@@ -1,35 +1,17 @@
 import streamlit as st
-import pandas as pd
-from data_loader import load_upcoming_matches
-from predictor import predict, load_model
+from predictor import predict
+from api_client import get_upcoming_matches
 
-st.set_page_config(page_title="Value Bets App", layout="centered")
+st.title("⚽ Value Bets Прогнози – Реални Мачове")
 
-st.title("🎯 Стойностни залози (Value Bets)")
-st.markdown("Прогнози, базирани на обучен модел. Данните са примерни.")
+matches_df = get_upcoming_matches(count=10)
 
-# Зареждане на примерни мачове
-matches_df = load_upcoming_matches()
-st.subheader("Предстоящи мачове")
-st.dataframe(matches_df)
+if matches_df.empty:
+    st.warning("Няма налични мачове в момента.")
+else:
+    preds = predict(matches_df)
+    matches_df["Value %"] = (preds - 1 / matches_df["Коеф"]) * 100
+    matches_df = matches_df.sort_values(by="Value %", ascending=False)
 
-# Бутон за прогноза
-if st.button("🔍 Прогнозирай стойностни залози"):
-    try:
-        preds = predict(matches_df)
-        matches_df["Value вероятност"] = preds
-        matches_df["Препоръка"] = matches_df["Value вероятност"].apply(lambda x: "✅ Заложи" if x > 0.5 else "❌ Пропусни")
-        st.subheader("Прогноза")
-        st.dataframe(matches_df)
-    except Exception as e:
-        st.error(f"Грешка при прогнозиране: {e}")
-
-# Бутон за преобучаване
-st.markdown("---")
-if st.button("🔄 Преобучи модела"):
-    try:
-        import train_model
-        train_model.train()
-        st.success("Моделът е успешно преобучен!")
-    except Exception as e:
-        st.error(f"Грешка при обучението: {e}")
+    st.subheader("Прогнозирани Value Залози")
+    st.dataframe(matches_df)
