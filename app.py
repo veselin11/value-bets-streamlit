@@ -2,31 +2,36 @@ import streamlit as st
 import requests
 import datetime
 import pytz
+import matplotlib.pyplot as plt
 
-# Конфигурации
+# Константи
 THE_ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
-FOOTBALL_DATA_API_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
 BASE_URL = "https://api.the-odds-api.com/v4/sports/"
 MARKETS = ["totals", "h2h"]
 BOOKMAKERS = ["pinnacle"]
 MIN_VALUE_THRESHOLD = 0.2  # 20%
-INITIAL_BANKROLL = 1000
-BET_AMOUNT = 50
+STARTING_BANKROLL = 500
+TARGET_BANKROLL = 650
+KELLY_FRACTION = 0.5
 
+# Session state
 if 'bets' not in st.session_state:
     st.session_state.bets = []
 if 'bankroll' not in st.session_state:
-    st.session_state.bankroll = INITIAL_BANKROLL
+    st.session_state.bankroll = STARTING_BANKROLL
+if 'daily_results' not in st.session_state:
+    st.session_state.daily_results = {}
 
-# UI - Заглавие и избор на дата
-st.markdown("""
-    <h2 style='color:#004488;'>ТОП Стойностни Залози - Само Най-Добрите</h2>
-    <p>Избери дата за филтриране на мачове и виж стойностните залози само за непочнали събития.</p>
-""", unsafe_allow_html=True)
+# UI
+st.markdown("## 🎯 Цел: 30% печалба за 5 дни (от 500 до 650 лв.)")
+selected_date = st.date_input("📅 Избери дата", value=datetime.date.today())
+today_str = selected_date.strftime('%Y-%m-%d')
 
-selected_date = st.date_input("Избери дата", value=datetime.date.today())
+# Прогрес
+progress = ((st.session_state.bankroll - STARTING_BANKROLL) / (TARGET_BANKROLL - STARTING_BANKROLL)) * 100
+st.progress(min(progress, 100), text=f"Прогрес към целта: {progress:.1f}%")
 
-# Функция за зареждане на odds
+# Функции
 @st.cache_data(show_spinner=False)
 def fetch_odds(sport_key):
     url = f"{BASE_URL}{sport_key}/odds"
@@ -41,19 +46,24 @@ def fetch_odds(sport_key):
     response.raise_for_status()
     return response.json()
 
-# Изчисляване на стойност
-
 def calculate_value(odds, implied_prob):
-    if odds <= 1:
+    if odds <= 1 or implied_prob <= 0:
         return -1
     fair_odds = 1 / implied_prob
     value = (odds - fair_odds) / fair_odds
     return round(value * 100, 2)
 
-# Зареждане и филтриране
+def kelly_bet_size(bankroll, odds, implied_prob, kelly_fraction=0.5):
+    if implied_prob == 0 or odds <= 1:
+        return 0
+    b = odds - 1
+    q = 1 - implied_prob
+    kelly = ((b * implied_prob - q) / b)
+    return round(max(0, bankroll * kelly * kelly_fraction), 2)
+
+# Извличане на стойностни залози
 sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_denmark_superliga"]
 value_bets = []
-
 now = datetime.datetime.now(datetime.timezone.utc)
 
 for sport in sports:
@@ -70,72 +80,92 @@ for sport in sports:
                     for outcome in market['outcomes']:
                         if 'price' not in outcome or outcome['price'] <= 1:
                             continue
-                        if market['key'] == 'totals':
-                            total = outcome.get('point')
-                            selection = f"{outcome['name']} {total} гол(а)" if total else outcome['name']
-                            implied_prob = 0.5
-                        else:
-                            selection = outcome['name']
-                            implied_prob = 0.33
+                        implied_prob = 0.5 if market['key'] == "totals" else 0.33
+                        selection = outcome['name']
+                        if market['key'] == "totals" and "point" in outcome:
+                            selection += f" {outcome['point']} гола"
 
                         value = calculate_value(outcome['price'], implied_prob)
                         if value >= MIN_VALUE_THRESHOLD * 100:
-                            value_bets.append({
-                                "match": f"{match['home_team']} vs {match['away_team']}",
-                                "time": match_time,
-                                "league": sport,
-                                "market": market['key'],
-                                "selection": selection,
-                                "odds": outcome['price'],
-                                "value": value
-                            })
+                            stake = kelly_bet_size(st.session_state.bankroll, outcome['price'], implied_prob, KELLY_FRACTION)
+                            if stake >= 1:
+                                value_bets.append({
+                                    "match": f"{match['home_team']} vs {match['away_team']}",
+                                    "time": match_time,
+                                    "league": sport,
+                                    "market": market['key'],
+                                    "selection": selection,
+                                    "odds": outcome['price'],
+                                    "value": value,
+                                    "stake": stake
+                                })
     except Exception as e:
-        st.warning(f"Грешка при зареждане на {sport}: {e}")
+        st.warning(f"⚠️ Грешка при зареждане на {sport}: {e}")
 
-# Филтрирай по непочнали
+# Филтриране и сортиране
 filtered_bets = [b for b in value_bets if b['time'] > now]
-
-# Сортирай по стойност
 filtered_bets.sort(key=lambda x: x['value'], reverse=True)
 
-# Показване на топ 10
-st.markdown(f"<h4 style='color:#008000;'>ТОП 10 Стойностни Залози за {selected_date.strftime('%d.%m.%Y')} (Непочнали)</h4>", unsafe_allow_html=True)
-if not filtered_bets:
-    st.info("Няма стойностни залози с достатъчно висока стойност за избраната дата.")
-
-for i, bet in enumerate(filtered_bets[:10]):
+# Показване на ТОП 3
+st.markdown(f"### 🧠 ТОП 3 Стойностни Залога за {selected_date.strftime('%d.%m.%Y')}")
+shown_bets = 0
+for i, bet in enumerate(filtered_bets):
+    if shown_bets >= 3:
+        break
     col1, col2 = st.columns([4, 1])
     with col1:
         st.markdown(f"""
             <div style='border:1px solid #ccc; padding:10px; border-radius:10px; margin-bottom:10px;'>
-                <b style='color:#444;'>{bet['time'].strftime('%Y-%m-%d %H:%M')} | {bet['league']}</b><br>
-                <b style='color:#000;'>{bet['match']}</b><br>
+                <b style='color:#444;'>{bet['time'].strftime('%H:%M')} | {bet['league']}</b><br>
+                <b>{bet['match']}</b><br>
                 <i>Пазар:</i> {bet['market']} | <i>Залог:</i> {bet['selection']}<br>
                 <i>Коефициент:</i> <b>{bet['odds']}</b> | <i>Стойност:</i> <span style='color:#007700;'>+{bet['value']}%</span><br>
+                💸 <b>Препоръчан залог:</b> {bet['stake']} лв.
+            </div>
         """, unsafe_allow_html=True)
     with col2:
         if st.button("Заложи", key=f"bet_{i}"):
             result = {
                 "match": bet['match'],
-                "stake": BET_AMOUNT,
+                "stake": bet['stake'],
                 "odds": bet['odds'],
-                "potential_win": round(BET_AMOUNT * bet['odds'], 2),
-                "result": "pending"
+                "potential_win": round(bet['stake'] * bet['odds'], 2),
+                "result": "pending",
+                "date": today_str
             }
             st.session_state.bets.append(result)
-            st.session_state.bankroll -= BET_AMOUNT
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.session_state.bankroll -= bet['stake']
+            shown_bets += 1
 
-# Статистика на залозите
-st.markdown("<h4 style='color:#444;'>📊 Статистика на Залозите</h4>", unsafe_allow_html=True)
+# История
+st.markdown("### 📋 История на Залозите")
 if st.session_state.bets:
     for bet in st.session_state.bets:
         st.markdown(f"""
             <div style='background:#f9f9f9;padding:10px;border-radius:10px;margin-bottom:5px;'>
-                {bet['match']} | Коеф: {bet['odds']} | Статус: {bet['result']} | Потенц. печалба: {bet['potential_win']} лв.
+                {bet['date']} | {bet['match']} | {bet['stake']} лв. @ {bet['odds']} | Потенц. печалба: {bet['potential_win']} | Статус: {bet['result']}
             </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("Все още няма направени залози.")
+    st.info("Няма още направени залози.")
 
-st.markdown(f"<b>Оставаща банка:</b> {st.session_state.bankroll:.2f} лв.")
+# Графика: напредък по дни
+st.markdown("### 📊 Напредък по дни")
+if st.session_state.bets:
+    for bet in st.session_state.bets:
+        day = bet['date']
+        if day not in st.session_state.daily_results:
+            st.session_state.daily_results[day] = 0
+        st.session_state.daily_results[day] += bet['stake']
+
+    days = list(st.session_state.daily_results.keys())
+    amounts = list(st.session_state.daily_results.values())
+
+    fig, ax = plt.subplots()
+    ax.bar(days, amounts, color="#007700")
+    ax.set_ylabel("Общо заложено (лв.)")
+    ax.set_title("Залози по дни")
+    st.pyplot(fig)
+
+# Текуща банка
+st.markdown(f"💰 **Текуща банка:** {st.session_state.bankroll:.2f} лв.")
