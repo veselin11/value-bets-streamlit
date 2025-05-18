@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import datetime
-import time
 
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 FOOTBALL_DATA_API_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
@@ -45,11 +44,7 @@ def calculate_profit(bet_outcome, odd, amount=BET_AMOUNT):
         return -amount
 
 def get_match_result_from_football_data(home_team, away_team, match_date):
-    """
-    Търсим мач в football-data.org по дата и отбори, връщаме резултат и статус
-    """
     try:
-        # Форматираме дата YYYY-MM-DD
         date_str = match_date.strftime("%Y-%m-%d")
         url = f"{FOOTBALL_DATA_BASE_URL}/matches?dateFrom={date_str}&dateTo={date_str}"
 
@@ -58,10 +53,9 @@ def get_match_result_from_football_data(home_team, away_team, match_date):
         data = response.json()
 
         for match in data.get("matches", []):
-            # Сравняваме отбори (сравнявайки с главни букви и махаме бели пространства)
             if (match["homeTeam"]["name"].strip().upper() == home_team.strip().upper() and
                 match["awayTeam"]["name"].strip().upper() == away_team.strip().upper()):
-                status = match["status"]  # SCHEDULED, LIVE, FINISHED
+                status = match["status"]
                 score_home = match["score"]["fullTime"]["home"]
                 score_away = match["score"]["fullTime"]["away"]
                 if status == "FINISHED" and score_home is not None and score_away is not None:
@@ -70,38 +64,24 @@ def get_match_result_from_football_data(home_team, away_team, match_date):
                     return status, None, None
         return None, None, None
     except Exception as e:
-        st.warning(f"Грешка при заявка за резултат от football-data: {e}")
+        st.warning(f"Грешка при заявка за резултат: {e}")
         return None, None, None
 
-def determine_bet_outcome(market_key, selection, score_home, score_away):
-    """
-    Определяме печалба/загуба според пазара и избор
-    """
+def determine_bet_outcome(market_key, selection, score_home, score_away, home_team, away_team):
     if score_home is None or score_away is None:
-        return None  # няма резултат още
+        return None
 
     if market_key == "h2h":
-        # избор може да е името на отбор или "Draw"
         if selection == "Draw":
             return 1 if score_home == score_away else 0
-        elif selection == "Overtime" or selection == "Tie":
-            return 0
+        elif selection == home_team:
+            return 1 if score_home > score_away else 0
+        elif selection == away_team:
+            return 1 if score_away > score_home else 0
         else:
-            if selection == "Home":
-                return 1 if score_home > score_away else 0
-            elif selection == "Away":
-                return 1 if score_away > score_home else 0
-            else:
-                # Ако изборът е име на отбор, сравняваме с резултата
-                if selection == match_home_team:
-                    return 1 if score_home > score_away else 0
-                elif selection == match_away_team:
-                    return 1 if score_away > score_home else 0
-                else:
-                    return 0
+            return 0
 
     elif market_key == "totals":
-        # selection е нещо като "Over 2.5" или "Under 3.5"
         parts = selection.split(' ')
         if len(parts) == 2:
             direction, goal_line_str = parts
@@ -115,8 +95,8 @@ def determine_bet_outcome(market_key, selection, score_home, score_away):
             except:
                 return 0
         return 0
-    else:
-        return None
+
+    return None
 
 st.title("ТОП Стойностни Залози с Реални Резултати")
 
@@ -190,15 +170,13 @@ losses = 0
 st.subheader("ТОП 10 Стойностни Залози (Непочнали)")
 
 for bet in filtered_bets[:10]:
-    # Вземаме резултат от football-data.org
     status, score_home, score_away = get_match_result_from_football_data(
         bet["home_team"], bet["away_team"], bet["match_time_obj"]
     )
 
     if status == "FINISHED":
-        outcome = determine_bet_outcome(bet["market"], bet["selection"], score_home, score_away)
+        outcome = determine_bet_outcome(bet["market"], bet["selection"], score_home, score_away, bet["home_team"], bet["away_team"])
         if outcome is None:
-            # няма валиден резултат за този пазар
             continue
         profit = calculate_profit(outcome, bet['odd'])
         total_bets += 1
@@ -212,6 +190,17 @@ for bet in filtered_bets[:10]:
         profit = None
         result_text = "Мачът не е приключил"
 
-    st.markdown(
-        f"""
-        <div style="border:1px solid #ddd; padding:10px
+    st.markdown(f"""
+        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:5px;">
+            <b>{bet['time']} | {bet['league']}</b><br>
+            {bet['match']}<br>
+            Пазар: <i>{bet['market']}</i> | Избор: <b>{bet['selection']}</b><br>
+            Коефициент: <b>{bet['odd']}</b> | Стойност: <b>{bet['value']}%</b><br>
+            {('Гол линия: ' + bet['goal_line']) if bet['goal_line'] else ''}<br>
+            Статус: <b>{result_text}</b>
+            {f"| Печалба/Загуба: {profit} лв." if profit is not None else ''}
+        </div>
+    """, unsafe_allow_html=True)
+
+st.markdown(f"**Общо залози проверени:** {total_bets}  |  **Печалба/Загуба общо:** {total_profit} лв.")
+st.markdown(f"**Печеливши:** {wins}  |  **Загубени:** {losses}")
