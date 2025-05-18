@@ -1,97 +1,104 @@
 import streamlit as st
-import requests
 import random
-from datetime import date
+import datetime
 
-API_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
-BASE_URL = "https://v3.football.api-sports.io"
-HEADERS = {"x-apisports-key": API_KEY}
-
-# Зареждане на мачове от API за днес
-def fetch_todays_matches():
-    today_str = date.today().isoformat()
-    url = f"{BASE_URL}/fixtures"
-    params = {"date": today_str}
-    response = requests.get(url, headers=HEADERS, params=params)
-    data = response.json()
-    matches = []
-    if data["results"] == 0:
-        return matches
-    for item in data["response"]:
-        home = item["teams"]["home"]["name"]
-        away = item["teams"]["away"]["name"]
-        fixture_id = item["fixture"]["id"]
-        # Опитваме да вземем коефициенти от първия букмейкър, ако има
-        odds = {"1": None, "X": None, "2": None}
-        bookmakers = item.get("bookmakers", [])
-        if bookmakers:
-            bets = bookmakers[0].get("bets", [])
-            for bet in bets:
-                if bet["name"] == "Match Winner":
-                    for val in bet["values"]:
-                        odds[val["name"]] = float(val["odd"])
-                    break
-        matches.append({
-            "match": f"{home} vs {away}",
-            "odds": odds,
-            "selected": False
-        })
-    return matches
-
-# Инициализация Streamlit сесия
+# Начална настройка на сесията
 if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 500
+    st.session_state.bankroll = 500.0
 if "bets_history" not in st.session_state:
     st.session_state.bets_history = []
 if "todays_matches" not in st.session_state:
-    st.session_state.todays_matches = fetch_todays_matches()
+    st.session_state.todays_matches = [
+        {"match": "Барселона vs Хетафе", "odds": 1.55, "prediction": "1", "selected": False},
+        {"match": "Верона vs Болоня", "odds": 2.10, "prediction": "2", "selected": False},
+        {"match": "Брюж vs Андерлехт", "odds": 2.45, "prediction": "X", "selected": False}
+    ]
 
-st.title("Value Bets App - Стойностни залози")
+st.set_page_config(page_title="Value Bets App", layout="centered")
 
-if not st.session_state.todays_matches:
-    st.write("Няма налични мачове за днес или проблем с API.")
-else:
-    st.write("Днешни мачове с реални коефициенти:")
+# CSS за по-добър дизайн и мобилна съвместимост
+st.markdown("""
+<style>
+    .main {
+        max-width: 600px;
+        margin: auto;
+        padding: 20px 10px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .match-box {
+        background-color: #f0f2f6;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        transition: border-color 0.3s ease;
+    }
+    .match-box.selected {
+        border: 2px solid #4CAF50 !important;
+    }
+    button {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: background-color 0.3s ease;
+        width: 100%;
+        margin-top: 10px;
+    }
+    button:hover:not(:disabled) {
+        background-color: #45a049;
+    }
+    button:disabled {
+        background-color: #a5a5a5;
+        cursor: not-allowed;
+    }
+    h2, h1 {
+        color: #333333;
+        text-align: center;
+    }
+    .bankroll {
+        font-size: 1.4rem;
+        font-weight: 700;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    .stRadio > label {
+        font-weight: 600;
+        font-size: 1rem;
+    }
+    @media (max-width: 480px) {
+        .main {
+            padding: 15px 5px;
+        }
+        button {
+            font-size: 1.1rem;
+            padding: 12px 0;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    for i, match in enumerate(st.session_state.todays_matches):
-        odds = match["odds"]
-        st.write(f"{i+1}. {match['match']} | 1: {odds['1']} | X: {odds['X']} | 2: {odds['2']}")
+st.markdown('<div class="main">', unsafe_allow_html=True)
 
-    match_index = st.number_input("Избери номер на мач за залагане:", min_value=1, max_value=len(st.session_state.todays_matches), value=1) - 1
+st.title("Стойностни залози - Value Bets App")
 
-    bet_option = st.selectbox("Избери прогноза:", options=["1", "X", "2"])
-    max_bet = st.session_state.bankroll
-    bet_amount = st.number_input(f"Въведи сума за залог (до {max_bet:.2f} лв.):", min_value=1.0, max_value=max_bet, value=10.0)
+st.markdown(f'<div class="bankroll">Текуща банка: {st.session_state.bankroll:.2f} лв.</div>', unsafe_allow_html=True)
 
-    if st.button("Заложи"):
-        match = st.session_state.todays_matches[match_index]
-        if match["selected"]:
-            st.warning("Вече си заложил на този мач.")
-        else:
-            odd_value = match["odds"].get(bet_option)
-            if odd_value is None:
-                st.error("Няма наличен коефициент за тази прогноза.")
-            else:
-                win = random.random() < 1 / odd_value
-                result = "Печалба" if win else "Загуба"
-                if win:
-                    profit = bet_amount * (odd_value - 1)
-                    st.session_state.bankroll += profit
-                else:
-                    st.session_state.bankroll -= bet_amount
-                match["selected"] = True
-                st.session_state.bets_history.append({
-                    "match": match["match"],
-                    "prediction": bet_option,
-                    "odds": odd_value,
-                    "amount": bet_amount,
-                    "result": result
-                })
-                st.success(f"{result}! Текуща банка: {st.session_state.bankroll:.2f} лв.")
+bet_amount = st.number_input(
+    "Въведи сума за залог (лв.):",
+    min_value=1,
+    max_value=int(st.session_state.bankroll),
+    value=50,
+    step=1
+)
 
-    if st.session_state.bets_history:
-        st.header("История на залозите")
-        for bet in st.session_state.bets_history:
-            st.write(f"{bet['match']} | Прогноза: {bet['prediction']} | Коефициент: {bet['odds']} | Сума: {bet['amount']} | Резултат: {bet['result']}")
-
-    st.markdown(f"### Текуща банка: {st.session_state.bankroll:.2f} лв.")
+# Избор на мач
+matches_display = [
+    f"{m['match']} | Прогноза: {m['prediction']} | Коефициент: {m['odds']}"
+    for m in st.session_state.todays_matches
+]
+selected_match_index = st.radio("Избери мач за залог
