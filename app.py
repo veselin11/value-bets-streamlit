@@ -5,7 +5,7 @@ import datetime
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 BASE_URL = "https://api.the-odds-api.com/v4/sports"
 
-# Списък с ключове за основните европейски лиги
+# Валидни лиги към момента (без тези, които дават 404)
 EUROPE_LEAGUES = [
     "soccer_epl",
     "soccer_spain_la_liga",
@@ -15,9 +15,6 @@ EUROPE_LEAGUES = [
     "soccer_netherlands_eredivisie",
     "soccer_portugal_primeira_liga",
     "soccer_russia_premier_league",
-    "soccer_turkey_superlig",
-    "soccer_belgium_jupiler_league",
-    "soccer_scotland_premiership",
     "soccer_austria_bundesliga",
     "soccer_sweden_allsvenskan",
     "soccer_norway_eliteserien",
@@ -30,9 +27,6 @@ st.title("Стойностни Залози - Автоматичен Анали�
 st.write("Зареждам мачове от всички основни европейски първенства...")
 
 value_bets = []
-total_bets = 0
-wins = 0
-losses = 0
 
 def is_value_bet(odd, prob_threshold=0.5):
     """Оценка дали коефициентът е стойностен спрямо вероятност."""
@@ -54,15 +48,12 @@ for league_key in EUROPE_LEAGUES:
             home_team = match.get("home_team", "")
             away_team = match.get("away_team", "")
 
-            # Обхождаме букмейкърите и пазара h2h (краен изход)
             for bookmaker in match.get("bookmakers", []):
                 for market in bookmaker.get("markets", []):
                     if market["key"] == "h2h":
-                        outcomes = market.get("outcomes", [])
-                        for outcome in outcomes:
+                        for outcome in market.get("outcomes", []):
                             odd = outcome.get("price")
                             name = outcome.get("name")
-                            # Филтрираме стойностни залози (примерно с коефициент над 1.5)
                             if odd and odd > 1.5 and is_value_bet(odd, prob_threshold=0.6):
                                 value_bets.append({
                                     "league": league_key,
@@ -72,8 +63,13 @@ for league_key in EUROPE_LEAGUES:
                                     "selection": name,
                                     "odd": odd
                                 })
+    except requests.exceptions.HTTPError as http_err:
+        if response.status_code == 404:
+            st.warning(f"Лига '{league_key}' не е намерена (404), пропускам...")
+        else:
+            st.error(f"Грешка при зареждане на {league_key}: {http_err}")
     except Exception as e:
-        st.write(f"Грешка при зареждане на {league_key}: {e}")
+        st.error(f"Грешка при зареждане на {league_key}: {e}")
 
 if value_bets:
     st.subheader("Намерени стойностни залози:")
