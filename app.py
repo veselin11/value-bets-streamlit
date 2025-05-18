@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 
 # Настройки
-API_KEY = "ТВОЯТ_API_KEY"
+API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
 REGIONS = "eu"
 MARKETS = ["h2h", "over_under", "btts"]  # 1X2, над/под, гол/гол
 ODDS_FORMAT = "decimal"
