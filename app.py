@@ -98,7 +98,13 @@ def determine_bet_outcome(market_key, selection, score_home, score_away, home_te
 
     return None
 
+# --- UI ---
+
+st.set_page_config(page_title="Стойностни залози", layout="wide")
 st.title("ТОП Стойностни Залози с Реални Резултати")
+
+# Избор на дата
+selected_date = st.date_input("Избери дата за филтриране на мачове", datetime.date.today())
 
 value_bets = []
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -114,6 +120,8 @@ for league_key in EUROPE_LEAGUES:
 
         for match in matches:
             match_time = datetime.datetime.fromisoformat(match.get("commence_time", "").replace("Z", "+00:00"))
+            if match_time.date() != selected_date:
+                continue
             if match_time <= now:
                 continue  # само непочнали
 
@@ -140,7 +148,10 @@ for league_key in EUROPE_LEAGUES:
                 if value_percent >= 5:
                     goal_line = ""
                     if market_key == "totals":
-                        goal_line = name.split(' ')[1] if len(name.split(' ')) > 1 else ""
+                        # Взимаме числото след "Over " или "Under "
+                        parts = name.split(' ')
+                        if len(parts) > 1:
+                            goal_line = parts[1]
 
                     value_bets.append({
                         "league": league_key,
@@ -167,7 +178,7 @@ total_profit = 0
 wins = 0
 losses = 0
 
-st.subheader("ТОП 10 Стойностни Залози (Непочнали)")
+st.subheader(f"ТОП 10 Стойностни Залози за {selected_date.strftime('%d.%m.%Y')} (Непочнали)")
 
 for bet in filtered_bets[:10]:
     status, score_home, score_away = get_match_result_from_football_data(
@@ -186,21 +197,41 @@ for bet in filtered_bets[:10]:
         else:
             losses += 1
         result_text = "Печалба" if outcome == 1 else "Загуба"
+        result_color = "#1a7f37" if outcome == 1 else "#cc0000"
     else:
         profit = None
         result_text = "Мачът не е приключил"
+        result_color = "#555555"
 
+    # Цветно и стилно каре
     st.markdown(f"""
-        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:5px;">
-            <b>{bet['time']} | {bet['league']}</b><br>
-            {bet['match']}<br>
-            Пазар: <i>{bet['market']}</i> | Избор: <b>{bet['selection']}</b><br>
-            Коефициент: <b>{bet['odd']}</b> | Стойност: <b>{bet['value']}%</b><br>
-            {('Гол линия: ' + bet['goal_line']) if bet['goal_line'] else ''}<br>
-            Статус: <b>{result_text}</b>
-            {f"| Печалба/Загуба: {profit} лв." if profit is not None else ''}
+        <div style="
+            border:1px solid #ddd; 
+            padding:12px; 
+            margin-bottom:12px; 
+            border-radius:8px; 
+            box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
+            background: linear-gradient(90deg, #f9f9f9 0%, #e6f0ff 100%);
+            font-family: Arial, sans-serif;
+        ">
+            <b style="font-size:1.1em; color:#333;">{bet['time']} | {bet['league']}</b><br>
+            <span style="font-size:1.2em; font-weight:600; color:#222;">{bet['match']}</span><br><br>
+            Пазар: <i style="color:#555;">{bet['market']}</i> | Избор: <b style="color:#004080;">{bet['selection']}</b><br>
+            Коефициент: <b style="color:#004080;">{bet['odd']}</b> | Стойност: <b style="color:#0066cc;">{bet['value']}%</b><br>
+            {(f"<span style='color:#333;'>Гол линия: <b>{bet['goal_line']}</b></span><br>" if bet['goal_line'] else "")}
+            Статус: <b style="color:{result_color};">{result_text}</b>
+            {f"| Печалба/Загуба: <b style='color:{result_color};'>{profit} лв.</b>" if profit is not None else ''}
         </div>
     """, unsafe_allow_html=True)
 
-st.markdown(f"**Общо залози проверени:** {total_bets}  |  **Печалба/Загуба общо:** {total_profit} лв.")
-st.markdown(f"**Печеливши:** {wins}  |  **Загубени:** {losses}")
+if total_bets > 0:
+    st.markdown(f"""
+        <div style="font-family: Arial, sans-serif; margin-top:20px;">
+            <b>Общо проверени залози:</b> {total_bets} &nbsp;&nbsp;|&nbsp;&nbsp; 
+            <b style="color:#0066cc;">Печалба/Загуба общо:</b> {total_profit} лв.<br>
+            <b style="color:#1a7f37;">Печеливши:</b> {wins} &nbsp;&nbsp;|&nbsp;&nbsp; 
+            <b style="color:#cc0000;">Загубени:</b> {losses}
+        </div>
+    """, unsafe_allow_html=True)
+else:
+    st.info("Няма стойностни залози за избраната дата и критерии.")
