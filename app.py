@@ -1,44 +1,81 @@
-// Автоматичен анализатор на стойностни залози // Поддържани пазари: 1X2, Над/Под 2.5, Гол/Гол
+# Автоматичен анализатор на стойностни залози – Поддържани пазари: 1X2, Над/Под 2.5, Гол/Гол
 
-const fetch = require("node-fetch"); const API_KEY = "YOUR_API_KEY"; const SPORTS = [ "soccer_epl", "soccer_uefa_champs_league", "soccer_italy_serie_a", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_france_ligue_one" ];
+import streamlit as st
+import requests
+from datetime import datetime
 
-const TARGET_MARKETS = ["h2h", "totals", "btts"];
+# Настройки
+API_KEY = "ТВОЯТ_API_KEY"
+REGIONS = "eu"
+MARKETS = ["h2h", "over_under", "btts"]  # 1X2, над/под, гол/гол
+ODDS_FORMAT = "decimal"
+DATE_FORMAT = "iso"
+VALUE_THRESHOLD = 1.05  # Минимална стойност за стойностен залог
 
-const MIN_VALUE_THRESHOLD = 1.05; // минимална стойност за стойностен залог const MIN_BOOKMAKERS = 2; // поне 2 различни букмейкъра
+# Основни лиги от Европа
+LEAGUES = [
+    "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
+    "soccer_italy_serie_a", "soccer_france_ligue_one", "soccer_netherlands_eredivisie",
+    "soccer_greece_super_league", "soccer_portugal_primeira_liga", "soccer_denmark_superliga",
+    "soccer_norway_eliteserien", "soccer_sweden_allsvenskan", "soccer_switzerland_superleague",
+    "soccer_austria_bundesliga", "soccer_bulgaria_first_professional", "soccer_czech_republic_first_league"
+]
 
-function calculateValue(odds, impliedProb) { return odds * impliedProb; }
+# Показване на заглавие
+st.title("Стойностни Залози – Автоматичен Анализ")
+st.markdown("**Цел:** Да показва само най-стойностните залози за деня – автоматично подбрани.")
 
-function impliedProbability(odds) { return 1 / odds; }
+# Функция за изчисляване на стойност
+def calculate_value(odd, implied_prob):
+    if implied_prob == 0:
+        return 0
+    return odd * (1 - implied_prob)
 
-async function fetchOddsForSport(sport) { const url = https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${API_KEY}&regions=eu&markets=${TARGET_MARKETS.join(",")}&oddsFormat=decimal&dateFormat=iso; const res = await fetch(url); if (!res.ok) throw new Error(Грешка при зареждане: ${sport}); return res.json(); }
-
-async function getValueBets() { let allValueBets = [];
-
-for (const sport of SPORTS) { try { const matches = await fetchOddsForSport(sport); for (const match of matches) { const outcomes = {}; for (const bookmaker of match.bookmakers || []) { for (const market of bookmaker.markets || []) { for (const outcome of market.outcomes) { const key = ${market.key}_${outcome.name}; if (!outcomes[key]) outcomes[key] = []; outcomes[key].push(outcome.price); } } }
-
-for (const [key, prices] of Object.entries(outcomes)) {
-      if (prices.length < MIN_BOOKMAKERS) continue;
-      const maxOdds = Math.max(...prices);
-      const avgProb = prices.reduce((a, b) => a + impliedProbability(b), 0) / prices.length;
-      const value = calculateValue(maxOdds, avgProb);
-
-      if (value >= MIN_VALUE_THRESHOLD) {
-        allValueBets.push({
-          match: match.home_team + " vs " + match.away_team,
-          time: match.commence_time,
-          market: key,
-          bestOdds: maxOdds.toFixed(2),
-          value: value.toFixed(2)
-        });
-      }
+# Заявка към API
+def fetch_odds(league, market):
+    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
+    params = {
+        "apiKey": API_KEY,
+        "regions": REGIONS,
+        "markets": market,
+        "oddsFormat": ODDS_FORMAT,
+        "dateFormat": DATE_FORMAT
     }
-  }
-} catch (err) {
-  console.error(err.message);
-}
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        st.warning(f"Грешка при зареждане на {league}: {response.status_code}")
+        return []
+    return response.json()
 
-}
+# Обработка и показване на стойностни залози
+def analyze_and_display():
+    found_value_bets = False
+    for league in LEAGUES:
+        for market in MARKETS:
+            data = fetch_odds(league, market)
+            for match in data:
+                teams = match['teams']
+                commence = match['commence_time'][:16].replace("T", " ")
+                for bookmaker in match.get('bookmakers', []):
+                    for outcome in bookmaker.get('markets', []):
+                        if market not in outcome['key']:
+                            continue
+                        for selection in outcome.get('outcomes', []):
+                            odd = selection.get('price')
+                            implied_prob = 1 / odd if odd else 0
+                            value = calculate_value(odd, implied_prob)
+                            if value >= VALUE_THRESHOLD:
+                                found_value_bets = True
+                                st.markdown(f"**{teams[0]} vs {teams[1]}**  \n"
+                                            f"Лига: `{league}`  \n"
+                                            f"Пазар: `{market}`  \n"
+                                            f"Избор: `{selection['name']}`  \n"
+                                            f"Коефициент: `{odd}`  \n"
+                                            f"Букмейкър: `{bookmaker['title']}`  \n"
+                                            f"Стойност: `{round(value, 2)}`  \n"
+                                            f"Час: `{commence}`  \n---")
+    if not found_value_bets:
+        st.info("Няма открити стойностни залози за днес.")
 
-return allValueBets; }
-
-(async () => { const valueBets = await getValueBets(); if (valueBets.length === 0) { console.log("Няма открити стойностни залози за днес."); } else { console.log("Стойностни залози:"); valueBets.forEach((bet) => { console.log(${bet.match} | ${bet.market} | Коефициент: ${bet.bestOdds} | Стойност: ${bet.value}); }); } })();
+# Изпълнение
+analyze_and_display()
