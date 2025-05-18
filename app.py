@@ -1,87 +1,85 @@
 import streamlit as st
 import requests
-import datetime
-import random
+from datetime import datetime
 
-# API ключ и URL
 API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
-API_URL = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey={API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFormat=iso"
+API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+SPORTS = [
+    "soccer_brazil_campeonato",
+    "soccer_denmark_superliga",
+    "soccer_finland_veikkausliiga",
+    "soccer_japan_j_league",
+    "soccer_league_of_ireland",
+    "soccer_norway_eliteserien",
+    "soccer_spain_segunda_division",
+    "soccer_sweden_allsvenskan",
+    "soccer_sweden_superettan",
+    "soccer_usa_mls"
+]
 
-# Начална сесия
-if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 500.0
-if "bets_history" not in st.session_state:
-    st.session_state.bets_history = []
+st.title("Стойностни Залози - Автоматичен Анализ")
+st.markdown("**Цел:** Да показва само най-стойностните залози за деня - автоматично подбрани.")
 
-# Заглавие
-st.set_page_config(page_title="Value Bets App", layout="centered")
-st.title("Стойностни залози - Value Bets")
+profit = st.session_state.get("profit", 0.0)
+initial_bankroll = st.session_state.get("initial_bankroll", 500.0)
 
-# Зареждане на мачове
-matches = []
-try:
-    response = requests.get(API_URL)
-    if response.status_code == 200:
-        data = response.json()
-        for match in data:
-            teams = match.get("teams", [])
-            if len(teams) == 2:
-                odds_data = match.get("bookmakers", [])[0]["markets"][0]["outcomes"]
-                for outcome in odds_data:
-                    if outcome["name"] == teams[0]:  # Залагаме на домакина
-                        odds = outcome["price"]
-                        if odds >= 1.5 and odds <= 2.5:
-                            matches.append({
-                                "match": f"{teams[0]} vs {teams[1]}",
-                                "prediction": "1",
-                                "odds": odds
-                            })
-    else:
-        st.error(f"Грешка при зареждане на мачове: {response.status_code}")
-except Exception as e:
-    st.error(f"Възникна грешка: {e}")
+found_bets = []
 
-# Ако няма мачове – примерни
-if not matches:
-    st.warning("Няма реални мачове или стойностни залози – използваме примерни.")
-    matches = [
-        {"match": "Барселона vs Хетафе", "prediction": "1", "odds": 1.55},
-        {"match": "Верона vs Болоня", "prediction": "2", "odds": 2.10},
-        {"match": "Брюж vs Андерлехт", "prediction": "X", "odds": 3.20},
-    ]
-
-# Показване на банка
-st.markdown(f"**Текуща банка:** {st.session_state.bankroll:.2f} лв.")
-
-# Въвеждане на залог
-bet_amount = st.number_input("Сума за залог (лв.):", min_value=1, max_value=int(st.session_state.bankroll), value=50, step=1)
-selected = st.radio("Избери мач:", [f"{m['match']} | {m['prediction']} | {m['odds']}" for m in matches])
-
-# Натискане на бутон
-if st.button("Заложи"):
-    match = next((m for m in matches if f"{m['match']} | {m['prediction']} | {m['odds']}" == selected), None)
-    if match:
-        win = random.random() < 1 / match["odds"]
-        result = "Печалба" if win else "Загуба"
-        if win:
-            profit = bet_amount * (match["odds"] - 1)
-            st.session_state.bankroll += profit
-        else:
-            st.session_state.bankroll -= bet_amount
-        st.session_state.bets_history.append({
-            "match": match["match"],
-            "prediction": match["prediction"],
-            "odds": match["odds"],
-            "amount": bet_amount,
-            "result": result,
-            "date": str(datetime.date.today())
+for sport_key in SPORTS:
+    try:
+        url = API_URL.format(sport_key=sport_key)
+        response = requests.get(url, params={
+            "apiKey": API_KEY,
+            "regions": "eu",
+            "markets": "h2h",
+            "oddsFormat": "decimal",
+            "dateFormat": "iso"
         })
-        st.success(f"{match['match']} | {result} | Банка: {st.session_state.bankroll:.2f} лв.")
 
-# История
-st.subheader("История на залозите")
-if st.session_state.bets_history:
-    for bet in st.session_state.bets_history[::-1]:
-        st.write(f"{bet['date']} | {bet['match']} | Прогноза: {bet['prediction']} | Коеф: {bet['odds']} | {bet['result']} | Залог: {bet['amount']} лв.")
+        response.raise_for_status()
+        data = response.json()
+
+        for match in data:
+            home = match["home_team"]
+            away = match["away_team"]
+            commence_time = datetime.fromisoformat(match["commence_time"]).strftime("%d-%m %H:%M")
+
+            for bookmaker in match.get("bookmakers", []):
+                outcomes = bookmaker.get("markets", [])[0].get("outcomes", [])
+                if len(outcomes) < 2:
+                    continue
+
+                odds = {o["name"]: o["price"] for o in outcomes}
+                max_odds = max(odds.values())
+                implied_prob = 1 / max_odds
+                fair_odds = 1 / implied_prob
+
+                if max_odds > fair_odds * 1.05:  # >=5% стойностен залог
+                    bet = {
+                        "Мач": f"{home} vs {away}",
+                        "Час": commence_time,
+                        "Пазар": max(odds, key=odds.get),
+                        "Коефициент": max_odds,
+                        "Стойност": round((max_odds * implied_prob - 1) * 100, 2)
+                    }
+                    found_bets.append(bet)
+    except Exception as e:
+        continue
+
+if found_bets:
+    st.success("Открити стойностни залози за днес:")
+    for bet in found_bets:
+        st.write(f"**{bet['Мач']}** - {bet['Час']} | Пазар: {bet['Пазар']} | Коеф: {bet['Коефициент']} | Стойност: {bet['Стойност']}%")
+
+        if st.button(f"Заложи на {bet['Мач']} - {bet['Пазар']}", key=bet['Мач']+bet['Пазар']):
+            profit += (bet['Коефициент'] - 1) * 50  # Печалба при успех
+            st.session_state["profit"] = profit
+            st.success(f"Добавен залог. Потенциална печалба: {round((bet['Коефициент'] - 1) * 50, 2)} лв.")
 else:
-    st.info("Все още няма направени залози.")
+    st.warning("Няма открити стойностни залози за днес.")
+
+st.markdown("---")
+st.subheader("Статистика")
+st.write(f"Начален капитал: {initial_bankroll:.2f} лв.")
+st.write(f"Текуща печалба/загуба: {profit:.2f} лв.")
+st.write(f"Текущ баланс: {initial_bankroll + profit:.2f} лв.")
