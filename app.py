@@ -1,51 +1,60 @@
-import streamlit as st
-import requests
-import pandas as pd
-from datetime import datetime
+import random
+import datetime
 
-API_KEY = "34fd7e0b821f644609d4fac44e3bc30f228e8dc0040b9f0c79aeef702c0f267f"
+# Настройки
+bankroll = 500
+bets_history = []
 
-BASE_URL = "https://allsportsapi.com/api/football/"
+# Днешна дата
+today = datetime.date.today()
 
-def get_fixtures_for_today(api_key):
-    today = datetime.today().strftime('%Y-%m-%d')
-    params = {
-        "met": "Fixtures",
-        "APIkey": api_key,
-        "from": today,
-        "to": today,
-        "leagueId": "",  # ако искаш, сложи конкретна лига, иначе празно
-    }
-    response = requests.get(BASE_URL, params=params)
-    if response.status_code != 200:
-        st.error(f"Грешка при зареждане на мачове: {response.status_code}")
-        return pd.DataFrame()
+# Днешни мачове (примерни)
+todays_matches = [
+    {"match": "Барселона vs Хетафе", "odds": 1.55, "prediction": "1", "selected": False},
+    {"match": "Верона vs Болоня", "odds": 2.10, "prediction": "2", "selected": False},
+    {"match": "Брюж vs Андерлехт", "odds": 2.45, "prediction": "X", "selected": False}
+]
 
-    data = response.json()
+# Функция за залагане на мач
+def place_bet(match_index, amount):
+    global bankroll
+    match = todays_matches[match_index]
+    if match["selected"]:
+        print(f"Вече си заложил на мача: {match['match']}")
+        return
 
-    # Погледни ключовете на data, ако няма "result" - провери как се връща резултата
-    if "result" not in data:
-        st.error(f"API отговор без 'result' ключ: {data}")
-        return pd.DataFrame()
-
-    matches = data["result"]
-    rows = []
-    for m in matches:
-        rows.append({
-            "Час": m.get("match_time", ""),
-            "Дата": m.get("event_date", ""),
-            "Домакин": m.get("event_home_team", ""),
-            "Гост": m.get("event_away_team", ""),
-            "Лига": m.get("league_name", ""),
-            "Статус": m.get("event_status", ""),
-        })
-    return pd.DataFrame(rows)
-
-st.title("Value Bets с allsportsapi.com")
-
-if st.button("Зареди мачове за днес"):
-    df_matches = get_fixtures_for_today(API_KEY)
-    if not df_matches.empty:
-        st.dataframe(df_matches)
+    win = random.random() < 1 / match["odds"]
+    result = "Печалба" if win else "Загуба"
+    if win:
+        profit = amount * (match["odds"] - 1)
+        bankroll += profit
     else:
-        st.info("Няма мачове за днес или проблем с API.")
+        bankroll -= amount
+
+    match["selected"] = True
+    bets_history.append({
+        "match": match["match"],
+        "prediction": match["prediction"],
+        "odds": match["odds"],
+        "amount": amount,
+        "result": result,
+        "date": str(today)
+    })
+    print(f"{match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']} | {result} | Банка: {bankroll:.2f} лв.")
+
+# Показване на днешни мачове
+print("\n--- Днешни мачове ---")
+for i, match in enumerate(todays_matches):
+    print(f"{i + 1}. {match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']}")
+
+# Примерен избор на залози
+print("\n--- Изпълнение на залози ---")
+place_bet(0, 100)
+place_bet(1, 100)
+
+# Статистика
+print("\n--- История на залозите ---")
+for bet in bets_history:
+    print(f"{bet['date']} | {bet['match']} | {bet['prediction']} | {bet['odds']} | {bet['result']} | {bet['amount']} лв.")
+
+print(f"\nТекуща банка: {bankroll:.2f} лв.")
