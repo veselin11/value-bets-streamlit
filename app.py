@@ -1,85 +1,95 @@
 import streamlit as st
 import requests
-from datetime import datetime
+import datetime
 
 API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
-API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-SPORTS = [
-    "soccer_brazil_campeonato",
-    "soccer_denmark_superliga",
-    "soccer_finland_veikkausliiga",
-    "soccer_japan_j_league",
-    "soccer_league_of_ireland",
-    "soccer_norway_eliteserien",
-    "soccer_spain_segunda_division",
+BASE_URL = "https://api.the-odds-api.com/v4/sports"
+
+# Списък с ключове за основните европейски лиги
+EUROPE_LEAGUES = [
+    "soccer_epl",
+    "soccer_spain_la_liga",
+    "soccer_italy_serie_a",
+    "soccer_germany_bundesliga",
+    "soccer_france_ligue_one",
+    "soccer_netherlands_eredivisie",
+    "soccer_portugal_primeira_liga",
+    "soccer_russia_premier_league",
+    "soccer_turkey_superlig",
+    "soccer_belgium_jupiler_league",
+    "soccer_scotland_premiership",
+    "soccer_austria_bundesliga",
     "soccer_sweden_allsvenskan",
-    "soccer_sweden_superettan",
-    "soccer_usa_mls"
+    "soccer_norway_eliteserien",
+    "soccer_denmark_superliga",
+    "soccer_league_of_ireland"
 ]
 
-st.title("Стойностни Залози - Автоматичен Анализ")
-st.markdown("**Цел:** Да показва само най-стойностните залози за деня - автоматично подбрани.")
+st.title("Стойностни Залози - Автоматичен Анализ (ЕС)")
 
-profit = st.session_state.get("profit", 0.0)
-initial_bankroll = st.session_state.get("initial_bankroll", 500.0)
+st.write("Зареждам мачове от всички основни европейски първенства...")
 
-found_bets = []
+value_bets = []
+total_bets = 0
+wins = 0
+losses = 0
 
-for sport_key in SPORTS:
+def is_value_bet(odd, prob_threshold=0.5):
+    """Оценка дали коефициентът е стойностен спрямо вероятност."""
+    implied_prob = 1 / odd
+    return implied_prob < prob_threshold
+
+for league_key in EUROPE_LEAGUES:
+    url = f"{BASE_URL}/{league_key}/odds/?apiKey={API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFormat=iso"
     try:
-        url = API_URL.format(sport_key=sport_key)
-        response = requests.get(url, params={
-            "apiKey": API_KEY,
-            "regions": "eu",
-            "markets": "h2h",
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
-        })
-
+        response = requests.get(url)
         response.raise_for_status()
-        data = response.json()
+        matches = response.json()
+        if not matches:
+            continue
 
-        for match in data:
-            home = match["home_team"]
-            away = match["away_team"]
-            commence_time = datetime.fromisoformat(match["commence_time"]).strftime("%d-%m %H:%M")
+        for match in matches:
+            commence_time = match.get("commence_time", "")
+            match_time = datetime.datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+            home_team = match.get("home_team", "")
+            away_team = match.get("away_team", "")
 
+            # Обхождаме букмейкърите и пазара h2h (краен изход)
             for bookmaker in match.get("bookmakers", []):
-                outcomes = bookmaker.get("markets", [])[0].get("outcomes", [])
-                if len(outcomes) < 2:
-                    continue
-
-                odds = {o["name"]: o["price"] for o in outcomes}
-                max_odds = max(odds.values())
-                implied_prob = 1 / max_odds
-                fair_odds = 1 / implied_prob
-
-                if max_odds > fair_odds * 1.05:  # >=5% стойностен залог
-                    bet = {
-                        "Мач": f"{home} vs {away}",
-                        "Час": commence_time,
-                        "Пазар": max(odds, key=odds.get),
-                        "Коефициент": max_odds,
-                        "Стойност": round((max_odds * implied_prob - 1) * 100, 2)
-                    }
-                    found_bets.append(bet)
+                for market in bookmaker.get("markets", []):
+                    if market["key"] == "h2h":
+                        outcomes = market.get("outcomes", [])
+                        for outcome in outcomes:
+                            odd = outcome.get("price")
+                            name = outcome.get("name")
+                            # Филтрираме стойностни залози (примерно с коефициент над 1.5)
+                            if odd and odd > 1.5 and is_value_bet(odd, prob_threshold=0.6):
+                                value_bets.append({
+                                    "league": league_key,
+                                    "match": f"{home_team} vs {away_team}",
+                                    "time": match_time.strftime("%Y-%m-%d %H:%M"),
+                                    "bookmaker": bookmaker.get("title"),
+                                    "selection": name,
+                                    "odd": odd
+                                })
     except Exception as e:
-        continue
+        st.write(f"Грешка при зареждане на {league_key}: {e}")
 
-if found_bets:
-    st.success("Открити стойностни залози за днес:")
-    for bet in found_bets:
-        st.write(f"**{bet['Мач']}** - {bet['Час']} | Пазар: {bet['Пазар']} | Коеф: {bet['Коефициент']} | Стойност: {bet['Стойност']}%")
-
-        if st.button(f"Заложи на {bet['Мач']} - {bet['Пазар']}", key=bet['Мач']+bet['Пазар']):
-            profit += (bet['Коефициент'] - 1) * 50  # Печалба при успех
-            st.session_state["profit"] = profit
-            st.success(f"Добавен залог. Потенциална печалба: {round((bet['Коефициент'] - 1) * 50, 2)} лв.")
+if value_bets:
+    st.subheader("Намерени стойностни залози:")
+    for bet in value_bets:
+        st.markdown(
+            f"**{bet['match']}** ({bet['time']})  \n"
+            f"Лига: {bet['league']}  \n"
+            f"Букмейкър: {bet['bookmaker']}  \n"
+            f"Залог: {bet['selection']}  \n"
+            f"Коефициент: {bet['odd']:.2f}"
+        )
 else:
-    st.warning("Няма открити стойностни залози за днес.")
+    st.info("Няма открити стойностни залози за днес.")
 
+# --- Статистика ---
 st.markdown("---")
 st.subheader("Статистика")
-st.write(f"Начален капитал: {initial_bankroll:.2f} лв.")
-st.write(f"Текуща печалба/загуба: {profit:.2f} лв.")
-st.write(f"Текущ баланс: {initial_bankroll + profit:.2f} лв.")
+st.write("Печалби, загуби и общо залози (трябва да се въвеждат ръчно или автоматично при интеграция с реална база).")
+st.write("Понастоящем няма реализирани залози.")
