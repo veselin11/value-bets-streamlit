@@ -3,7 +3,7 @@ import requests
 import datetime
 import pandas as pd
 
-API_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
+API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 BASE_URL = "https://api.the-odds-api.com/v4/sports"
 
 EUROPE_LEAGUES = [
