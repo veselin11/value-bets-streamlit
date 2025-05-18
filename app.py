@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import datetime
-import pandas as pd
+import statistics
 
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 BASE_URL = "https://api.the-odds-api.com/v4/sports"
@@ -19,6 +19,10 @@ EUROPE_LEAGUES = [
     "soccer_denmark_superliga"
 ]
 
+MIN_PROBABILITY = 0.35  # минимална вероятност 35%
+MIN_BOOKMAKERS = 3      # минимум 3 букмейкъра с този залог
+MIN_VALUE_PERCENT = 5   # праг за стойност
+
 def calculate_value(odd, avg_odd):
     if not avg_odd or avg_odd == 0:
         return 0
@@ -33,8 +37,8 @@ def remove_duplicates_by_match(bets):
     return list(unique.values())
 
 st.set_page_config(page_title="ТОП Стойностни Залози", layout="wide")
-st.title("ТОП Стойностни Залози - Само Най-Добрите")
-st.write("Показваме само мачовете с най-висока очаквана възвръщаемост (над 5%).")
+st.title("ТОП Стойностни Залози - Над 35% Вероятност")
+st.write("Показваме само стойностни залози с вероятност ≥ 35% и минимум 3 букмейкъра.")
 
 value_bets = []
 
@@ -56,11 +60,12 @@ for league_key in EUROPE_LEAGUES:
             away_team = match.get("away_team", "")
             match_label = f"{home_team} vs {away_team}"
 
-            all_odds = {}
+            # Събираме коефициенти по селекция с букмейкъри
+            odds_bookmakers = {}
             for bookmaker in match.get("bookmakers", []):
                 for market in bookmaker.get("markets", []):
                     if market["key"] not in ["h2h", "totals"]:
-                        continue  # Премахваме пазара btts
+                        continue
 
                     for outcome in market.get("outcomes", []):
                         if market["key"] == "totals" and "point" in outcome:
@@ -69,45 +74,51 @@ for league_key in EUROPE_LEAGUES:
                             selection_name = outcome["name"]
 
                         key = (market["key"], selection_name)
-                        all_odds.setdefault(key, []).append(outcome["price"])
+                        odds_bookmakers.setdefault(key, []).append(outcome["price"])
 
-            for (market_key, name), prices in all_odds.items():
-                if len(prices) < 2:
+            for (market_key, selection_name), odds_list in odds_bookmakers.items():
+                if len(odds_list) < MIN_BOOKMAKERS:
                     continue
-                max_odd = max(prices)
-                avg_odd = sum(prices) / len(prices)
+
+                max_odd = max(odds_list)
+                avg_odd = statistics.median(odds_list)
                 value_percent = calculate_value(max_odd, avg_odd)
 
-                if value_percent >= 5:
+                # Вероятност = 1 / коефициент
+                probability = 1 / max_odd
+
+                if value_percent >= MIN_VALUE_PERCENT and probability >= MIN_PROBABILITY:
                     value_bets.append({
                         "league": league_key.replace("soccer_", "").replace("_", " ").title(),
                         "match": match_label,
                         "time": match_time.strftime("%Y-%m-%d %H:%M"),
-                        "selection": name,
+                        "selection": selection_name,
                         "market": market_key,
                         "odd": max_odd,
-                        "value": value_percent
+                        "value": value_percent,
+                        "probability": round(probability * 100, 2)
                     })
+
     except Exception as e:
         st.error(f"Грешка при зареждане на {league_key}: {e}")
 
-# Премахване на дубли и сортиране по стойност
+# Премахване на дубли и сортиране
 filtered_bets = remove_duplicates_by_match(value_bets)
 filtered_bets.sort(key=lambda x: x["value"], reverse=True)
 
-# Показваме само топ 10
-st.subheader("ТОП 10 Стойностни Залога за Деня")
+st.subheader("ТОП 10 Стойностни Залога с Вероятност ≥ 35%")
 if filtered_bets:
     for bet in filtered_bets[:10]:
         st.markdown(f"""
-        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:10px; background-color:#f9f9f9;">
+        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:10px; background:#f9f9f9;">
             <b>{bet['match']}</b> <span style="color:gray;">({bet['time']})</span><br>
             <i>Лига:</i> {bet['league']}<br>
             <i>Пазар:</i> {bet['market']}<br>
             <i>Залог:</i> <b>{bet['selection']}</b><br>
             <i>Коефициент:</i> <b>{bet['odd']:.2f}</b><br>
-            <i>Стойност:</i> <b style="color:green;">+{bet['value']}%</b>
+            <i>Стойност:</i> <b style="color:green;">+{bet['value']}%</b><br>
+            <i>Вероятност:</i> <b>{bet['probability']}%</b>
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.info("Няма стойностни залози с достатъчно висока стойност днес.")
+    st.info("Няма стойностни залози, които отговарят на зададените критерии.")
