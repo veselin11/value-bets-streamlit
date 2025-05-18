@@ -3,7 +3,6 @@ import requests
 import datetime
 import pandas as pd
 
-# Настройки
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 BASE_URL = "https://api.the-odds-api.com/v4/sports"
 
@@ -20,24 +19,6 @@ EUROPE_LEAGUES = [
     "soccer_denmark_superliga"
 ]
 
-LEAGUE_NAMES = {
-    "soccer_epl": "Англия - Висша лига",
-    "soccer_spain_la_liga": "Испания - Ла Лига",
-    "soccer_italy_serie_a": "Италия - Серия А",
-    "soccer_germany_bundesliga": "Германия - Бундеслига",
-    "soccer_france_ligue_one": "Франция - Лига 1",
-    "soccer_netherlands_eredivisie": "Нидерландия - Ередивизи",
-    "soccer_portugal_primeira_liga": "Португалия - Примейра Лига",
-    "soccer_sweden_allsvenskan": "Швеция - Алсвенскан",
-    "soccer_norway_eliteserien": "Норвегия - Елитсериен",
-    "soccer_denmark_superliga": "Дания - Суперлига"
-}
-
-MARKET_NAMES = {
-    "h2h": "Краен изход",
-    "totals": "Над/Под голове"
-}
-
 def calculate_value(odd, avg_odd):
     if not avg_odd or avg_odd == 0:
         return 0
@@ -51,9 +32,9 @@ def remove_duplicates_by_match(bets):
             unique[key] = bet
     return list(unique.values())
 
-# Заглавие и описание
-st.title("ТОП Стойностни Залози")
-st.caption("Фокус върху мачовете с най-висока очаквана възвръщаемост днес.")
+st.set_page_config(page_title="ТОП Стойностни Залози", layout="wide")
+st.title("ТОП Стойностни Залози - Само Най-Добрите")
+st.write("Показваме само мачовете с най-висока очаквана възвръщаемост (над 5%).")
 
 value_bets = []
 
@@ -68,6 +49,9 @@ for league_key in EUROPE_LEAGUES:
 
         for match in matches:
             match_time = datetime.datetime.fromisoformat(match.get("commence_time", "").replace("Z", "+00:00"))
+            if match_time <= datetime.datetime.utcnow():
+                continue  # Прескачаме започналите мачове
+
             home_team = match.get("home_team", "")
             away_team = match.get("away_team", "")
             match_label = f"{home_team} vs {away_team}"
@@ -75,8 +59,16 @@ for league_key in EUROPE_LEAGUES:
             all_odds = {}
             for bookmaker in match.get("bookmakers", []):
                 for market in bookmaker.get("markets", []):
+                    if market["key"] not in ["h2h", "totals"]:
+                        continue  # игнорираме други пазари, включително btts
+
                     for outcome in market.get("outcomes", []):
-                        key = (market["key"], outcome["name"])
+                        if market["key"] == "totals" and "point" in outcome:
+                            selection_name = f"{outcome['name']} {outcome['point']}"
+                        else:
+                            selection_name = outcome["name"]
+
+                        key = (market["key"], selection_name)
                         all_odds.setdefault(key, []).append(outcome["price"])
 
             for (market_key, name), prices in all_odds.items():
@@ -88,7 +80,7 @@ for league_key in EUROPE_LEAGUES:
 
                 if value_percent >= 5:
                     value_bets.append({
-                        "league": league_key,
+                        "league": league_key.replace("soccer_", "").replace("_", " ").title(),
                         "match": match_label,
                         "time": match_time.strftime("%Y-%m-%d %H:%M"),
                         "selection": name,
@@ -99,31 +91,23 @@ for league_key in EUROPE_LEAGUES:
     except Exception as e:
         st.error(f"Грешка при зареждане на {league_key}: {e}")
 
-# Обработка
+# Премахване на дубли и сортиране по стойност
 filtered_bets = remove_duplicates_by_match(value_bets)
 filtered_bets.sort(key=lambda x: x["value"], reverse=True)
 
-st.metric("Намерени стойностни залози", len(filtered_bets))
-
+# Показваме само топ 10
 st.subheader("ТОП 10 Стойностни Залога за Деня")
-
 if filtered_bets:
     for bet in filtered_bets[:10]:
-        league_name = LEAGUE_NAMES.get(bet['league'], bet['league'])
-        market_name = MARKET_NAMES.get(bet['market'], bet['market'])
-        value_color = "green" if bet["value"] >= 10 else "orange"
-        st.markdown(
-            f"""
-            <div style="padding: 10px; border-radius: 10px; background-color: #f9f9f9; margin-bottom: 10px;">
-                <h4 style="margin: 0;">{bet['match']} <span style="font-size: 14px;">({bet['time']})</span></h4>
-                <p style="margin: 4px 0;">Лига: <strong>{league_name}</strong></p>
-                <p style="margin: 4px 0;">Пазар: <strong>{market_name}</strong></p>
-                <p style="margin: 4px 0;">Залог: <strong>{bet['selection']}</strong></p>
-                <p style="margin: 4px 0;">Коефициент: <strong>{bet['odd']:.2f}</strong></p>
-                <p style="margin: 4px 0;">Стойност: <strong style="color:{value_color};">+{bet['value']}%</strong></p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        st.markdown(f"""
+        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:10px; background-color:#f9f9f9;">
+            <b>{bet['match']}</b> <span style="color:gray;">({bet['time']})</span><br>
+            <i>Лига:</i> {bet['league']}<br>
+            <i>Пазар:</i> {bet['market']}<br>
+            <i>Залог:</i> <b>{bet['selection']}</b><br>
+            <i>Коефициент:</i> <b>{bet['odd']:.2f}</b><br>
+            <i>Стойност:</i> <b style="color:green;">+{bet['value']}%</b>
+        </div>
+        """, unsafe_allow_html=True)
 else:
     st.info("Няма стойностни залози с достатъчно висока стойност днес.")
