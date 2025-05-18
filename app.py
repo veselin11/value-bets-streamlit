@@ -3,82 +3,78 @@ import requests
 
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 
-# Лиги, които да проверяваме (само валидни за The Odds API)
-LEAGUES = [
-    "soccer_epl",               # Англия - Премиър Лийг
-    "soccer_spain_la_liga",     # Испания - Ла Лига
-    "soccer_germany_bundesliga",# Германия - Бундеслига
-    "soccer_italy_serie_a",     # Италия - Серия А
-    "soccer_france_ligue_one",  # Франция - Лига 1
+EUROPE_LEAGUES = [
+    "soccer_epl",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
     "soccer_netherlands_eredivisie",
-    "soccer_portugal_liga",
     "soccer_russia_premier_league",
-    "soccer_turkey_superlig"
+    "soccer_ukraine_premier_league",
+    # махнати проблемни лиги:
+    # "soccer_portugal_liga",
+    # "soccer_turkey_superlig"
 ]
 
-def get_odds_for_league(league):
+MARKETS = ["h2h", "totals", "both_teams_to_score"]
+
+def fetch_odds(league):
     url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
     params = {
         "apiKey": API_KEY,
         "regions": "eu",
-        "markets": "h2h",  # Само 1X2
+        "markets": ",".join(MARKETS),
         "oddsFormat": "decimal",
         "dateFormat": "iso"
     }
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.HTTPError as e:
+        resp = requests.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.RequestException as e:
         st.warning(f"Грешка при зареждане на {league}: {e}")
-    except Exception as e:
-        st.warning(f"Грешка при заявката за {league}: {e}")
-    return None
+        return None
 
-def find_value_bets(matches):
+def calculate_value_bets(odds_data):
     value_bets = []
-    if not matches:
-        return value_bets
-    for match in matches:
-        teams = match.get("teams")
-        commence_time = match.get("commence_time")
-        bookmakers = match.get("bookmakers", [])
-        # Намираме средния коефициент за всеки изход от всички букмейкъри
-        outcomes_sum = {}
-        outcomes_count = {}
-        for bm in bookmakers:
-            for market in bm.get("markets", []):
-                if market.get("key") != "h2h":
-                    continue
-                for outcome in market.get("outcomes", []):
-                    name = outcome.get("name")
-                    price = outcome.get("price")
-                    if name and price:
-                        outcomes_sum[name] = outcomes_sum.get(name, 0) + price
-                        outcomes_count[name] = outcomes_count.get(name, 0) + 1
-        # Средни коефициенти
-        avg_odds = {k: outcomes_sum[k]/outcomes_count[k] for k in outcomes_sum}
+    for match in odds_data or []:
+        teams = match.get('teams')
+        commence_time = match.get('commence_time', '')
+        league = match.get('sport_key', '')
+        bookmakers = match.get('bookmakers', [])
 
-        # Текущите коефициенти на букмейкъра Pinnacle (ако има)
-        pinnacle = next((bm for bm in bookmakers if bm.get("title","").lower() == "pinnacle"), None)
-        if pinnacle:
-            pinnacle_market = next((m for m in pinnacle.get("markets", []) if m.get("key") == "h2h"), None)
-            if pinnacle_market:
-                for outcome in pinnacle_market.get("outcomes", []):
-                    name = outcome.get("name")
-                    price = outcome.get("price")
-                    if name and price and name in avg_odds:
-                        # Проверяваме дали коефициентът е стойностен (по-голям от средния)
-                        if price > avg_odds[name]:
-                            value_bets.append({
-                                "teams": teams,
-                                "time": commence_time,
-                                "league": match.get("sport_key"),
-                                "bookmaker": pinnacle.get("title"),
-                                "bet": name,
-                                "odd": price,
-                                "avg_odd": round(avg_odds[name], 2)
-                            })
+        # Пресмятане на средни коефициенти за всеки пазар и избор на стойностни залози
+        for bookmaker in bookmakers:
+            for market in bookmaker.get('markets', []):
+                market_key = market.get('key')
+                for outcome in market.get('outcomes', []):
+                    odd = outcome.get('price')
+                    name = outcome.get('name')
+
+                    # Изчисляване на среден коефициент по пазар и залог
+                    all_odds = []
+                    for bm in bookmakers:
+                        for m in bm.get('markets', []):
+                            if m.get('key') == market_key:
+                                for outc in m.get('outcomes', []):
+                                    if outc.get('name') == name:
+                                        all_odds.append(outc.get('price'))
+                    if not all_odds:
+                        continue
+                    avg_odd = sum(all_odds) / len(all_odds)
+
+                    # Стойностен залог, ако коефициентът на букмейкъра е поне 10% по-висок от средния
+                    if odd > avg_odd * 1.1:
+                        value_bets.append({
+                            "teams": teams,
+                            "time": commence_time,
+                            "league": league,
+                            "bookmaker": bookmaker.get('title'),
+                            "bet": f"{market_key} - {name}",
+                            "odd": odd,
+                            "avg_odd": round(avg_odd, 2)
+                        })
     return value_bets
 
 def main():
@@ -88,24 +84,35 @@ def main():
     st.write("Зареждам мачове от основните европейски първенства...")
 
     all_value_bets = []
-
-    for league in LEAGUES:
-        matches = get_odds_for_league(league)
-        if matches:
-            league_value_bets = find_value_bets(matches)
-            if league_value_bets:
-                all_value_bets.extend(league_value_bets)
+    for league in EUROPE_LEAGUES:
+        odds_data = fetch_odds(league)
+        if odds_data:
+            value_bets = calculate_value_bets(odds_data)
+            all_value_bets.extend(value_bets)
 
     if not all_value_bets:
         st.info("Няма открити стойностни залози за днес.")
     else:
         st.success(f"Намерени {len(all_value_bets)} стойностни залози:")
         for bet in all_value_bets:
-            st.write(f"**{bet['teams'][0]} vs {bet['teams'][1]}** ({bet['time']})")
-            st.write(f"Лига: {bet['league']}")
-            st.write(f"Букмейкър: {bet['bookmaker']}")
-            st.write(f"Залог: {bet['bet']}")
-            st.write(f"Коефициент: {bet['odd']} (Среден коефициент: {bet['avg_odd']})")
+            teams = bet.get('teams')
+            if teams and isinstance(teams, list) and len(teams) == 2:
+                match_str = f"**{teams[0]} vs {teams[1]}**"
+            else:
+                match_str = "Неизвестен мач"
+
+            time_str = bet.get('time', 'Неизвестно време')
+            league = bet.get('league', 'Неизвестна лига')
+            bookmaker = bet.get('bookmaker', 'Неизвестен букмейкър')
+            bet_name = bet.get('bet', 'Неизвестен залог')
+            odd = bet.get('odd', '?')
+            avg_odd = bet.get('avg_odd', '?')
+
+            st.write(f"{match_str} ({time_str})")
+            st.write(f"Лига: {league}")
+            st.write(f"Букмейкър: {bookmaker}")
+            st.write(f"Залог: {bet_name}")
+            st.write(f"Коефициент: {odd} (Среден коефициент: {avg_odd})")
             st.write("---")
 
 if __name__ == "__main__":
