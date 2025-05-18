@@ -32,37 +32,24 @@ def remove_duplicates_by_match(bets):
     return list(unique.values())
 
 def format_selection(market_key, name):
-    # Ако пазар е totals, показваме Over/Under с броя голове
     if market_key == "totals":
         parts = name.split()
         if len(parts) == 2:
             selection = parts[0]  # Over или Under
-            goals = parts[1]      # брой голове (2.5, 3.0 и т.н.)
+            goals = parts[1]      # 2.5, 3.0 и т.н.
             return f"{selection} {goals} гол(а)"
     return name
 
-def is_match_started(match_time):
-    now = datetime.datetime.now(datetime.timezone.utc)
-    return match_time <= now
+st.set_page_config(page_title="ТОП Стойностни Залози", layout="wide")
+st.title("ТОП Стойностни Залози - Само Най-Добрите")
+st.markdown("""
+Избери дата за филтриране на мачове и виж стойностните залози само за непочнали събития.
+""")
 
-# Инициализиране на сесийната памет за залози и статистика
-if "bets_placed" not in st.session_state:
-    st.session_state.bets_placed = []
-
-if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 500.0  # стартова банка
-
-if "stake" not in st.session_state:
-    st.session_state.stake = 10.0  # фиксирана сума за залог
-
-st.title("ТОП Стойностни Залози с Управление на Банка и Статистика")
-st.write("Показваме само непочнали мачове с най-висока очаквана възвръщаемост.")
-
-# Избор на дата
-selected_date = st.date_input("Избери дата за филтриране на мачове", datetime.date.today())
-selected_date_str = selected_date.strftime("%Y-%m-%d")
+selected_date = st.date_input("Избери дата", datetime.datetime.utcnow().date())
 
 value_bets = []
+now = datetime.datetime.utcnow()
 
 for league_key in EUROPE_LEAGUES:
     url = f"{BASE_URL}/{league_key}/odds/?apiKey={API_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso"
@@ -74,19 +61,11 @@ for league_key in EUROPE_LEAGUES:
             continue
 
         for match in matches:
-            # Дата на мача
-            commence_time_str = match.get("commence_time", "")
-            if not commence_time_str:
-                continue
-            # Преобразуване към datetime с таймзона
-            match_time = datetime.datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
-
-            # Филтър по избрана дата
-            if match_time.date().isoformat() != selected_date_str:
+            match_time = datetime.datetime.fromisoformat(match.get("commence_time", "").replace("Z", "+00:00"))
+            if match_time.date() != selected_date:
                 continue
 
-            # Проверка дали мачът не е започнал
-            if is_match_started(match_time):
+            if match_time <= now:
                 continue
 
             home_team = match.get("home_team", "")
@@ -109,85 +88,49 @@ for league_key in EUROPE_LEAGUES:
                 avg_odd = sum(prices) / len(prices)
                 value_percent = calculate_value(max_odd, avg_odd)
 
-                # По-строг праг за стойностни залози
-                if value_percent >= 10:
-                    selection_display = format_selection(market_key, name)
+                if value_percent >= 5:
                     value_bets.append({
                         "league": league_key,
                         "match": match_label,
-                        "time": match_time,
-                        "selection": selection_display,
+                        "time": match_time.strftime("%Y-%m-%d %H:%M"),
+                        "selection_raw": name,
+                        "selection": format_selection(market_key, name),
                         "market": market_key,
                         "odd": max_odd,
-                        "value": value_percent
+                        "value": value_percent,
+                        "match_time_obj": match_time
                     })
     except Exception as e:
         st.error(f"Грешка при зареждане на {league_key}: {e}")
 
-# Премахване на дубли и сортиране
 filtered_bets = remove_duplicates_by_match(value_bets)
 filtered_bets.sort(key=lambda x: x["value"], reverse=True)
 
 st.subheader(f"ТОП 10 Стойностни Залози за {selected_date.strftime('%d.%m.%Y')} (Непочнали)")
-if filtered_bets:
-    for idx, bet in enumerate(filtered_bets[:10]):
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            st.markdown(
-                f"**{bet['time'].strftime('%Y-%m-%d %H:%M')} | {bet['league']}**\n"
-                f"**{bet['match']}**\n"
-                f"Пазар: `{bet['market']}` | Залог: **{bet['selection']}**\n"
-                f"Коефициент: **{bet['odd']:.2f}** | Стойност: **+{bet['value']}%**"
-            )
-        with col2:
-            if st.button(f"Заложи #{idx+1}"):
-                # Проверка банкрол за залог
-                if st.session_state.bankroll < st.session_state.stake:
-                    st.warning("Недостатъчна банка за този залог!")
-                else:
-                    st.session_state.bankroll -= st.session_state.stake
-                    st.session_state.bets_placed.append({
-                        "match": bet["match"],
-                        "time": bet["time"],
-                        "selection": bet["selection"],
-                        "odd": bet["odd"],
-                        "stake": st.session_state.stake,
-                        "potential_win": round(st.session_state.stake * bet["odd"], 2),
-                        "result": "pending"
-                    })
-                    st.success(f"Заложи {st.session_state.stake} лв. на {bet['match']} - {bet['selection']}")
 
+if filtered_bets:
+    if "bets_placed" not in st.session_state:
+        st.session_state.bets_placed = []
+
+    for i, bet in enumerate(filtered_bets[:10], start=1):
+        with st.container():
+            st.markdown(f"""
+                <div style="padding:10px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;
+                            background: linear-gradient(90deg, #e0f7fa 0%, #ffffff 100%);">
+                    <h4 style="margin-bottom:5px;">{i}. {bet['match']} <small style="color:#888;">| {bet['time']} | {bet['league']}</small></h4>
+                    <p style="margin:0; font-size:1.1em;">
+                        <b>Пазар:</b> {bet['market']} &nbsp;&nbsp;
+                        <b>Залог:</b> {bet['selection']} &nbsp;&nbsp;
+                        <b>Коефициент:</b> {bet['odd']:.2f} &nbsp;&nbsp;
+                        <b>Стойност:</b> <span style="color:green;">+{bet['value']}%</span>
+                    </p>
+                    <p style="margin:5px 0 0 0; color:#555;">Мачът не е започнал</p>
+            """, unsafe_allow_html=True)
+
+            if st.button(f"Заложи: {bet['selection']} на {bet['match']}", key=f"bet_{i}"):
+                st.session_state.bets_placed.append(bet)
+                st.success(f"Заложено: {bet['selection']} на {bet['match']} с коефициент {bet['odd']:.2f}")
+
+            st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.info("Няма стойностни залози с достатъчно висока стойност за избраната дата.")
-
-# Управление на банката и залог
-st.sidebar.header("Настройки на залог и банка")
-stake_input = st.sidebar.number_input("Размер на залог (лв.)", min_value=1.0, max_value=1000.0, value=st.session_state.stake, step=1.0)
-st.session_state.stake = stake_input
-
-bankroll_display = st.sidebar.metric("Налична банка (лв.)", f"{st.session_state.bankroll:.2f}")
-
-# Показване на залозите и статистиката
-st.subheader("Заложени залози и статистика")
-
-if st.session_state.bets_placed:
-    for i, bet in enumerate(st.session_state.bets_placed):
-        status_color = "#555555"  # за "pending"
-        status_text = "Мачът не е приключил"
-
-        if bet["result"] == "won":
-            status_color = "#0f9d58"  # зелен
-            status_text = "Печелен залог"
-        elif bet["result"] == "lost":
-            status_color = "#db4437"  # червен
-            status_text = "Загубен залог"
-
-        st.markdown(
-            f"**{bet['time'].strftime('%Y-%m-%d %H:%M')}** | **{bet['match']}**\n"
-            f"Залог: **{bet['selection']}** | Коефициент: **{bet['odd']:.2f}**\n"
-            f"Заложена сума: {bet['stake']} лв. | Потенциален печалба: {bet['potential_win']} лв.\n"
-            f"<span style='color:{status_color}; font-weight:bold;'>{status_text}</span>",
-            unsafe_allow_html=True
-        )
-else:
-    st.info("Все още няма заложени залози.")
