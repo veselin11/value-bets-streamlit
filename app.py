@@ -9,52 +9,50 @@ SPORT_KEYS = [
     "soccer_sweden_allsvenskan",
     "soccer_usa_mls"
 ]
-REGION = "eu"
-MARKET = "h2h"
-ODDS_FORMAT = "decimal"
 
-st.title("Стойностни залози за днес")
+st.title("Стойностни залози (демо)")
 
-all_matches = []
+st.write("Зареждам мачове...")
+
+# Показваме за проверка
+st.write("Активни лиги:", SPORT_KEYS)
+
+found = False
 
 for sport_key in SPORT_KEYS:
+    st.write(f"Проверка на лига: {sport_key}")
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         "apiKey": API_KEY,
-        "regions": REGION,
-        "markets": MARKET,
-        "oddsFormat": ODDS_FORMAT
+        "regions": "eu",
+        "markets": "h2h",
+        "oddsFormat": "decimal"
     }
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        matches = response.json()
+        res = requests.get(url, params=params)
+        if res.status_code != 200:
+            st.error(f"Грешка {res.status_code} за {sport_key}: {res.text}")
+            continue
 
-        for match in matches:
-            home = match.get("home_team")
-            away = match.get("away_team")
-            commence = match.get("commence_time", "")[:16].replace("T", " ")
+        matches = res.json()
+        if not matches:
+            st.info(f"Няма мачове в {sport_key}")
+            continue
 
-            odds = match.get("bookmakers", [])
-            if odds:
-                h2h = odds[0]["markets"][0]["outcomes"]
-                match_data = {
-                    "Дата и час": commence,
-                    "Домакин": home,
-                    "Гост": away,
-                    "Коефициенти": {o["name"]: o["price"] for o in h2h}
-                }
-                all_matches.append(match_data)
+        found = True
+        for m in matches:
+            st.subheader(f"{m['home_team']} vs {m['away_team']}")
+            st.write("Начален час:", m["commence_time"][:16].replace("T", " "))
+
+            for bookmaker in m.get("bookmakers", []):
+                st.write(f"Букмейкър: {bookmaker['title']}")
+                for outcome in bookmaker["markets"][0]["outcomes"]:
+                    st.write(f"{outcome['name']}: {outcome['price']}")
+            st.markdown("---")
+
     except Exception as e:
-        st.error(f"Грешка при зареждане от {sport_key}: {str(e)}")
+        st.error(f"Грешка при връзка с {sport_key}: {str(e)}")
 
-if all_matches:
-    for m in all_matches:
-        st.subheader(f'{m["Домакин"]} vs {m["Гост"]}')
-        st.write(f'Дата и час: {m["Дата и час"]}')
-        for team, odd in m["Коефициенти"].items():
-            st.write(f'{team}: {odd}')
-        st.markdown("---")
-else:
-    st.info("Няма стойностни мачове в избраните лиги днес.")
+if not found:
+    st.warning("Не бяха открити стойностни залози в нито една лига.")
