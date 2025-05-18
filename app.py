@@ -1,110 +1,117 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+BASE_URL = "https://api.the-odds-api.com/v4"
 
-# За всяка лига задаваме валидни пазари, за да избегнем грешки 422
-LEAGUE_MARKETS = {
-    "soccer_epl": ["h2h"],  # само краен изход
-    "soccer_spain_la_liga": ["h2h", "totals", "both_teams_to_score"],
-    "soccer_germany_bundesliga": ["h2h", "totals"],
-    "soccer_france_ligue_one": ["h2h", "both_teams_to_score"],
-    "soccer_italy_serie_a": ["h2h", "totals", "both_teams_to_score"],
-    "soccer_netherlands_eredivisie": ["h2h"],
-    "soccer_portugal_primeira_liga": ["h2h", "totals"],
-    # Можеш да добавиш още лиги и пазари
-}
+# Пазари, които искаме да анализираме
+DESIRED_MARKETS = ["h2h", "totals", "both_teams_to_score"]
 
-EUROPEAN_LEAGUES = list(LEAGUE_MARKETS.keys())
+st.title("Стойностни Залози - Автоматичен Анализ")
 
-def fetch_odds(league):
-    markets = LEAGUE_MARKETS.get(league, ["h2h"])  # По подразбиране само h2h
-    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+@st.cache_data(ttl=3600)
+def get_sports():
+    url = f"{BASE_URL}/sports"
+    params = {"apiKey": API_KEY}
+    resp = requests.get(url, params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_valid_leagues():
+    sports = get_sports()
+    valid_leagues = []
+    for sport in sports:
+        if not sport.get("key", "").startswith("soccer_"):
+            continue  # само футбол
+        for league in sport.get("leagues", []):
+            # Поне един от пазари да е наличен
+            if any(m in DESIRED_MARKETS for m in league.get("markets", [])):
+                valid_leagues.append(league["key"])
+    return valid_leagues
+
+def fetch_odds(league_key):
+    url = f"{BASE_URL}/sports/{league_key}/odds"
     params = {
         "apiKey": API_KEY,
         "regions": "eu",
-        "markets": ",".join(markets),
+        "markets": ",".join(DESIRED_MARKETS),
         "oddsFormat": "decimal",
         "dateFormat": "iso"
     }
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.warning(f"Грешка при зареждане на {league}: {e}")
-        return None
+    resp = requests.get(url, params=params)
+    if resp.status_code == 404:
+        # Лигата не е намерена, игнорирай
+        return []
+    resp.raise_for_status()
+    return resp.json()
 
-def calculate_value_bet(odds_list, true_prob=0.5):
-    # Опитай се да изчислиш стойностния коефициент по прости правила:
-    # Ако коефициентът е по-висок от 1/true_prob - стойностен залог
-    # Тук true_prob може да се подобри с по-добър модел, сега е фиктивна стойност
+def calculate_value(odds, probability_estimate=0.5):
+    # Определяме стойност на залога: ако коефициент > 1 / вероятност => стойностен
+    return odds > (1 / probability_estimate)
+
+def analyze_value_bets(matches):
     value_bets = []
-    for bookmaker, odd in odds_list.items():
+    for match in matches:
         try:
-            odd_val = float(odd)
-            implied_prob = 1 / odd_val
-            if implied_prob < true_prob:  # Примерна стойностна логика
-                value_bets.append((bookmaker, odd_val))
-        except Exception:
+            teams = match["teams"]
+            commence_time = match["commence_time"]
+            game_time = datetime.fromisoformat(commence_time.replace("Z", "+00:00")).astimezone()
+            bookmakers = match.get("bookmakers", [])
+
+            for bookmaker in bookmakers:
+                for market in bookmaker.get("markets", []):
+                    market_key = market["key"]
+                    for outcome in market.get("outcomes", []):
+                        odds = outcome.get("price")
+                        # Тук с примерно 0.5 вероятност за стойност, може да се подобри с по-сложен модел
+                        if calculate_value(odds):
+                            value_bets.append({
+                                "teams": teams,
+                                "time": game_time.strftime("%Y-%m-%d %H:%M"),
+                                "league": match.get("sport_key"),
+                                "bookmaker": bookmaker.get("title"),
+                                "market": market_key,
+                                "bet": outcome.get("name"),
+                                "odds": odds
+                            })
+        except Exception as e:
+            # Пропускаме грешки в конкретен мач
             continue
     return value_bets
 
-def analyze_and_display():
-    st.title("Стойностни Залози - Автоматичен Анализ (ЕС)")
-    st.write("Цел: Да показва само най-стойностните залози за деня - автоматично подбрани.\n")
-
+def main():
     st.write("Зареждам мачове от основните европейски първенства...")
+    valid_leagues = get_valid_leagues()
 
-    total_value_bets = 0
+    all_value_bets = []
 
-    for league in EUROPEAN_LEAGUES:
-        odds_data = fetch_odds(league)
-        if odds_data is None:
-            continue
-
-        for match in odds_data:
-            teams = match.get('teams', [])
-            commence_time = match.get('commence_time', '')
-            if not teams or not commence_time:
+    for league in valid_leagues:
+        try:
+            matches = fetch_odds(league)
+            if not matches:
                 continue
-            # Форматиране на време
-            try:
-                dt_obj = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-                time_str = dt_obj.strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                time_str = commence_time
+            # Добавяме ключ за лигата към всеки мач
+            for m in matches:
+                m["sport_key"] = league
+            bets = analyze_value_bets(matches)
+            all_value_bets.extend(bets)
+        except Exception as e:
+            st.write(f"Грешка при зареждане на {league}: {str(e)}")
 
-            # Събиране на коефициенти за пазари
-            for market in match.get('bookmakers', []):
-                bookmaker_name = market.get('title', 'Unknown')
-                for market_odds in market.get('markets', []):
-                    # Анализирай само пазари, които сме задали за тази лига
-                    if market_odds.get('key') not in LEAGUE_MARKETS[league]:
-                        continue
+    if not all_value_bets:
+        st.write("Няма открити стойностни залози за днес.")
+        return
 
-                    outcomes = market_odds.get('outcomes', [])
-                    # Изграждане речник букмейкър -> коефициент за всеки изход
-                    odds_dict = {}
-                    for outcome in outcomes:
-                        odds_dict[outcome['name']] = outcome['price']
-
-                    # Примерен анализ: стойностни залози за краен изход "Home", "Away", "Draw"
-                    # Сложи тук твоята по-сложна логика за стойностни залози
-                    value_bets = calculate_value_bet(odds_dict)
-                    if value_bets:
-                        total_value_bets += 1
-                        st.write(f"**{teams[0]} vs {teams[1]}** ({time_str})")
-                        st.write(f"Лига: {league}")
-                        st.write(f"Пазар: {market_odds.get('key')}")
-                        st.write(f"Букмейкър: {bookmaker_name}")
-                        for bmk, odd_val in value_bets:
-                            st.write(f"- Залог: {bmk}, Коефициент: {odd_val}")
-                        st.write("---")
-
-    if total_value_bets == 0:
-        st.info("Няма открити стойностни залози за днес.")
+    st.write(f"Намерени {len(all_value_bets)} стойностни залози:")
+    for bet in all_value_bets:
+        st.markdown(f"**{bet['teams'][0]} vs {bet['teams'][1]}** ({bet['time']})")
+        st.markdown(f"- Лига: {bet['league']}")
+        st.markdown(f"- Букмейкър: {bet['bookmaker']}")
+        st.markdown(f"- Пазар: {bet['market']}")
+        st.markdown(f"- Залог: {bet['bet']}")
+        st.markdown(f"- Коефициент: {bet['odds']}")
+        st.markdown("---")
 
 if __name__ == "__main__":
-    analyze_and_display()
+    main()
