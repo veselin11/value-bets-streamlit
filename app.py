@@ -1,85 +1,96 @@
-import streamlit as st
-import requests
-from datetime import datetime
+// Основен JavaScript код за анализ и показване на стойностни залози
+// Включва пазари 1X2, над/под 2.5, гол/гол и очаквана стойност
 
-API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
-API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-SPORTS = [
-    "soccer_brazil_campeonato",
-    "soccer_denmark_superliga",
-    "soccer_finland_veikkausliiga",
-    "soccer_japan_j_league",
-    "soccer_league_of_ireland",
-    "soccer_norway_eliteserien",
-    "soccer_spain_segunda_division",
-    "soccer_sweden_allsvenskan",
-    "soccer_sweden_superettan",
-    "soccer_usa_mls"
-]
+const API_KEY = 'ТВОЯТ_API_КЛЮЧ';
+const SPORTS = [
+  'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
+  'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+  'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga',
+  'soccer_greece_super_league', 'soccer_austria_bundesliga',
+  'soccer_switzerland_superleague', 'soccer_czech_czech_liga',
+  'soccer_poland_ekstraklasa', 'soccer_croatia_1_hnl'
+];
 
-st.title("Стойностни Залози - Автоматичен Анализ")
-st.markdown("**Цел:** Да показва само най-стойностните залози за деня - автоматично подбрани.")
+const MARKETS = ['h2h', 'totals', 'both_teams_to_score'];
+const VALUE_THRESHOLD = 1.05; // Минимална стойност за валиден стойностен залог
 
-profit = st.session_state.get("profit", 0.0)
-initial_bankroll = st.session_state.get("initial_bankroll", 500.0)
+async function fetchOddsForSport(sport) {
+  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${API_KEY}&regions=eu&markets=${MARKETS.join(',')}&oddsFormat=decimal&dateFormat=iso`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Грешка при зареждане на ${sport}`);
+  return response.json();
+}
 
-found_bets = []
+function calculateValue(odds, impliedProb) {
+  return odds * impliedProb;
+}
 
-for sport_key in SPORTS:
-    try:
-        url = API_URL.format(sport_key=sport_key)
-        response = requests.get(url, params={
-            "apiKey": API_KEY,
-            "regions": "eu",
-            "markets": "h2h",
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
-        })
+function getMarketValueBet(market, outcomes) {
+  let best = null;
+  outcomes.forEach(o => {
+    const implied = 1 / o.odds;
+    const value = calculateValue(o.odds, implied);
+    if (value >= VALUE_THRESHOLD) {
+      if (!best || value > best.value) {
+        best = { name: o.name, odds: o.odds, value, market };
+      }
+    }
+  });
+  return best;
+}
 
-        response.raise_for_status()
-        data = response.json()
+async function loadValueBets() {
+  const results = [];
+  for (let sport of SPORTS) {
+    try {
+      const games = await fetchOddsForSport(sport);
+      games.forEach(game => {
+        const { home_team, away_team, bookmakers, commence_time } = game;
+        bookmakers.forEach(bm => {
+          bm.markets.forEach(mkt => {
+            const bet = getMarketValueBet(mkt.key, mkt.outcomes);
+            if (bet) {
+              results.push({
+                home: home_team,
+                away: away_team,
+                bookmaker: bm.title,
+                commence_time,
+                ...bet
+              });
+            }
+          });
+        });
+      });
+    } catch (e) {
+      console.warn(e.message);
+    }
+  }
 
-        for match in data:
-            home = match["home_team"]
-            away = match["away_team"]
-            commence_time = datetime.fromisoformat(match["commence_time"]).strftime("%d-%m %H:%M")
+  displayValueBets(results);
+}
 
-            for bookmaker in match.get("bookmakers", []):
-                outcomes = bookmaker.get("markets", [])[0].get("outcomes", [])
-                if len(outcomes) < 2:
-                    continue
+function displayValueBets(bets) {
+  const container = document.getElementById('value-bets');
+  container.innerHTML = '';
+  if (bets.length === 0) {
+    container.innerHTML = '<p>Няма открити стойностни залози за днес.</p>';
+    return;
+  }
 
-                odds = {o["name"]: o["price"] for o in outcomes}
-                max_odds = max(odds.values())
-                implied_prob = 1 / max_odds
-                fair_odds = 1 / implied_prob
+  bets.sort((a, b) => b.value - a.value);
+  bets.forEach(bet => {
+    const row = document.createElement('div');
+    row.className = 'bet-row';
+    row.innerHTML = `
+      <strong>${bet.home} vs ${bet.away}</strong><br>
+      Час: ${new Date(bet.commence_time).toLocaleString()}<br>
+      Пазар: ${bet.market} | Залог: ${bet.name}<br>
+      Букмейкър: ${bet.bookmaker}<br>
+      Коефициент: ${bet.odds} | Стойност: ${bet.value.toFixed(2)}
+      <hr>
+    `;
+    container.appendChild(row);
+  });
+}
 
-                if max_odds > fair_odds * 1.05:  # >=5% стойностен залог
-                    bet = {
-                        "Мач": f"{home} vs {away}",
-                        "Час": commence_time,
-                        "Пазар": max(odds, key=odds.get),
-                        "Коефициент": max_odds,
-                        "Стойност": round((max_odds * implied_prob - 1) * 100, 2)
-                    }
-                    found_bets.append(bet)
-    except Exception as e:
-        continue
-
-if found_bets:
-    st.success("Открити стойностни залози за днес:")
-    for bet in found_bets:
-        st.write(f"**{bet['Мач']}** - {bet['Час']} | Пазар: {bet['Пазар']} | Коеф: {bet['Коефициент']} | Стойност: {bet['Стойност']}%")
-
-        if st.button(f"Заложи на {bet['Мач']} - {bet['Пазар']}", key=bet['Мач']+bet['Пазар']):
-            profit += (bet['Коефициент'] - 1) * 50  # Печалба при успех
-            st.session_state["profit"] = profit
-            st.success(f"Добавен залог. Потенциална печалба: {round((bet['Коефициент'] - 1) * 50, 2)} лв.")
-else:
-    st.warning("Няма открити стойностни залози за днес.")
-
-st.markdown("---")
-st.subheader("Статистика")
-st.write(f"Начален капитал: {initial_bankroll:.2f} лв.")
-st.write(f"Текуща печалба/загуба: {profit:.2f} лв.")
-st.write(f"Текущ баланс: {initial_bankroll + profit:.2f} лв.")
+document.addEventListener('DOMContentLoaded', loadValueBets);
