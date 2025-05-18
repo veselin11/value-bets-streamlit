@@ -22,7 +22,7 @@ st.markdown("""
     .main {
         max-width: 600px;
         margin: auto;
-        padding: 20px 10px;
+        padding: 10px;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     .match-box {
@@ -30,54 +30,26 @@ st.markdown("""
         padding: 15px;
         margin-bottom: 15px;
         border-radius: 8px;
-        border: 1px solid #ccc;
-        transition: border-color 0.3s ease;
-    }
-    .match-box.selected {
-        border: 2px solid #4CAF50 !important;
     }
     button {
         background-color: #4CAF50;
         color: white;
         border: none;
-        padding: 10px 20px;
-        border-radius: 8px;
+        padding: 8px 15px;
+        border-radius: 5px;
         cursor: pointer;
-        font-weight: 600;
-        font-size: 1rem;
-        transition: background-color 0.3s ease;
-        width: 100%;
-        margin-top: 10px;
-    }
-    button:hover:not(:disabled) {
-        background-color: #45a049;
     }
     button:disabled {
         background-color: #a5a5a5;
         cursor: not-allowed;
     }
-    h2, h1 {
+    h2 {
         color: #333333;
-        text-align: center;
     }
     .bankroll {
-        font-size: 1.4rem;
-        font-weight: 700;
-        margin-bottom: 20px;
-        text-align: center;
-    }
-    .stRadio > label {
-        font-weight: 600;
-        font-size: 1rem;
-    }
-    @media (max-width: 480px) {
-        .main {
-            padding: 15px 5px;
-        }
-        button {
-            font-size: 1.1rem;
-            padding: 12px 0;
-        }
+        font-size: 1.3rem;
+        font-weight: bold;
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -88,17 +60,57 @@ st.title("Стойностни залози - Value Bets App")
 
 st.markdown(f'<div class="bankroll">Текуща банка: {st.session_state.bankroll:.2f} лв.</div>', unsafe_allow_html=True)
 
-bet_amount = st.number_input(
-    "Въведи сума за залог (лв.):",
-    min_value=1,
-    max_value=int(st.session_state.bankroll),
-    value=50,
-    step=1
-)
+st.header("Днешни мачове за залагане")
 
-# Избор на мач
+bet_amount = st.number_input("Въведи сума за залог (лв.):", min_value=1, max_value=int(st.session_state.bankroll), value=50, step=1)
+
 matches_display = [
     f"{m['match']} | Прогноза: {m['prediction']} | Коефициент: {m['odds']}"
     for m in st.session_state.todays_matches
 ]
-selected_match_index = st.radio("Избери мач за залог
+
+selected_match_index = st.radio(
+    "Избери мач за залог:",
+    options=matches_display,
+    index=0
+)
+
+def place_bet():
+    idx = matches_display.index(selected_match_index)
+    match = st.session_state.todays_matches[idx]
+    if match["selected"]:
+        st.warning(f"Вече си заложил на мача: {match['match']}")
+        return
+    if bet_amount > st.session_state.bankroll:
+        st.error("Нямаш достатъчно пари в банката за този залог.")
+        return
+    # Изчисляване на резултат
+    win = random.random() < 1 / match["odds"]
+    result = "Печалба" if win else "Загуба"
+    if win:
+        profit = bet_amount * (match["odds"] - 1)
+        st.session_state.bankroll += profit
+    else:
+        st.session_state.bankroll -= bet_amount
+    match["selected"] = True
+    st.session_state.bets_history.append({
+        "match": match["match"],
+        "prediction": match["prediction"],
+        "odds": match["odds"],
+        "amount": bet_amount,
+        "result": result,
+        "date": str(datetime.date.today())
+    })
+    st.success(f"{match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']} | {result} | Банка: {st.session_state.bankroll:.2f} лв.")
+
+if st.button("Заложи"):
+    place_bet()
+
+st.header("История на залозите")
+if st.session_state.bets_history:
+    for bet in st.session_state.bets_history:
+        st.write(f"{bet['date']} | {bet['match']} | Прогноза: {bet['prediction']} | Коефициент: {bet['odds']} | {bet['result']} | Заложено: {bet['amount']} лв.")
+else:
+    st.write("Все още няма направени залози.")
+
+st.markdown('</div>', unsafe_allow_html=True)
