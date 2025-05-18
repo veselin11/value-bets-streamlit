@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 import datetime
 
-# Конфигурация
 API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
 REGION = "eu"
 MARKET = "h2h"
@@ -13,16 +12,14 @@ st.set_page_config(page_title="Стойностни залози", layout="cente
 st.title("Стойностни залози (Value Bets App)")
 st.write("Основна цел: показване на реални мачове с **висока стойност** според коефициентите и изчислена вероятност.")
 
-# Помощна функция за изчисление на стойност на залога
 def calculate_value(odds, implied_prob):
     if odds <= 1:
         return 0
     return round((odds * implied_prob - 1), 2)
 
-# Заявка към The Odds API
 @st.cache_data(ttl=1800)
 def fetch_matches():
-    url = "https://api.the-odds-api.com/v4/sports/soccer_european_championship/odds/"
+    url = "https://api.the-odds-api.com/v4/sports/soccer_europe/odds/"
     params = {
         "apiKey": API_KEY,
         "regions": REGION,
@@ -38,7 +35,6 @@ def fetch_matches():
 matches = fetch_matches()
 value_bets = []
 
-# Филтриране на стойностни залози
 for match in matches:
     if not isinstance(match, dict) or "bookmakers" not in match:
         continue
@@ -60,7 +56,6 @@ for match in matches:
                         "value": value
                     })
 
-# Показване на резултатите
 if value_bets:
     st.subheader("Най-стойностни залози за днес:")
     for bet in value_bets:
