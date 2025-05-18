@@ -1,7 +1,7 @@
 // Основен JavaScript код за анализ и показване на стойностни залози
 // Включва пазари 1X2, над/под 2.5, гол/гол и очаквана стойност
 
-const API_KEY = 'ТВОЯТ_API_КЛЮЧ';
+const API_KEY = '4474e2c1f44b1561daf6c481deb050cb';
 const SPORTS = [
   'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
   'soccer_germany_bundesliga', 'soccer_france_ligue_one',
