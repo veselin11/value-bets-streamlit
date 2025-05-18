@@ -49,7 +49,7 @@ for league_key in EUROPE_LEAGUES:
 
         for match in matches:
             match_time = datetime.datetime.fromisoformat(match.get("commence_time", "").replace("Z", "+00:00"))
-            if match_time <= datetime.datetime.utcnow():
+            if match_time <= datetime.datetime.now(datetime.timezone.utc):
                 continue  # Прескачаме започналите мачове
 
             home_team = match.get("home_team", "")
@@ -60,7 +60,7 @@ for league_key in EUROPE_LEAGUES:
             for bookmaker in match.get("bookmakers", []):
                 for market in bookmaker.get("markets", []):
                     if market["key"] not in ["h2h", "totals"]:
-                        continue  # игнорираме други пазари, включително btts
+                        continue  # Премахваме пазара btts
 
                     for outcome in market.get("outcomes", []):
                         if market["key"] == "totals" and "point" in outcome:
