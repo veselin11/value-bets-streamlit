@@ -1,119 +1,110 @@
 import streamlit as st
 import requests
+from datetime import datetime
 
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 
-EUROPE_LEAGUES = [
-    "soccer_epl",
-    "soccer_spain_la_liga",
-    "soccer_germany_bundesliga",
-    "soccer_italy_serie_a",
-    "soccer_france_ligue_one",
-    "soccer_netherlands_eredivisie",
-    "soccer_russia_premier_league",
-    "soccer_ukraine_premier_league",
-    # махнати проблемни лиги:
-    # "soccer_portugal_liga",
-    # "soccer_turkey_superlig"
-]
+# За всяка лига задаваме валидни пазари, за да избегнем грешки 422
+LEAGUE_MARKETS = {
+    "soccer_epl": ["h2h"],  # само краен изход
+    "soccer_spain_la_liga": ["h2h", "totals", "both_teams_to_score"],
+    "soccer_germany_bundesliga": ["h2h", "totals"],
+    "soccer_france_ligue_one": ["h2h", "both_teams_to_score"],
+    "soccer_italy_serie_a": ["h2h", "totals", "both_teams_to_score"],
+    "soccer_netherlands_eredivisie": ["h2h"],
+    "soccer_portugal_primeira_liga": ["h2h", "totals"],
+    # Можеш да добавиш още лиги и пазари
+}
 
-MARKETS = ["h2h", "totals", "both_teams_to_score"]
+EUROPEAN_LEAGUES = list(LEAGUE_MARKETS.keys())
 
 def fetch_odds(league):
+    markets = LEAGUE_MARKETS.get(league, ["h2h"])  # По подразбиране само h2h
     url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
     params = {
         "apiKey": API_KEY,
         "regions": "eu",
-        "markets": ",".join(MARKETS),
+        "markets": ",".join(markets),
         "oddsFormat": "decimal",
         "dateFormat": "iso"
     }
     try:
-        resp = requests.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
     except requests.exceptions.RequestException as e:
         st.warning(f"Грешка при зареждане на {league}: {e}")
         return None
 
-def calculate_value_bets(odds_data):
+def calculate_value_bet(odds_list, true_prob=0.5):
+    # Опитай се да изчислиш стойностния коефициент по прости правила:
+    # Ако коефициентът е по-висок от 1/true_prob - стойностен залог
+    # Тук true_prob може да се подобри с по-добър модел, сега е фиктивна стойност
     value_bets = []
-    for match in odds_data or []:
-        teams = match.get('teams')
-        commence_time = match.get('commence_time', '')
-        league = match.get('sport_key', '')
-        bookmakers = match.get('bookmakers', [])
-
-        # Пресмятане на средни коефициенти за всеки пазар и избор на стойностни залози
-        for bookmaker in bookmakers:
-            for market in bookmaker.get('markets', []):
-                market_key = market.get('key')
-                for outcome in market.get('outcomes', []):
-                    odd = outcome.get('price')
-                    name = outcome.get('name')
-
-                    # Изчисляване на среден коефициент по пазар и залог
-                    all_odds = []
-                    for bm in bookmakers:
-                        for m in bm.get('markets', []):
-                            if m.get('key') == market_key:
-                                for outc in m.get('outcomes', []):
-                                    if outc.get('name') == name:
-                                        all_odds.append(outc.get('price'))
-                    if not all_odds:
-                        continue
-                    avg_odd = sum(all_odds) / len(all_odds)
-
-                    # Стойностен залог, ако коефициентът на букмейкъра е поне 10% по-висок от средния
-                    if odd > avg_odd * 1.1:
-                        value_bets.append({
-                            "teams": teams,
-                            "time": commence_time,
-                            "league": league,
-                            "bookmaker": bookmaker.get('title'),
-                            "bet": f"{market_key} - {name}",
-                            "odd": odd,
-                            "avg_odd": round(avg_odd, 2)
-                        })
+    for bookmaker, odd in odds_list.items():
+        try:
+            odd_val = float(odd)
+            implied_prob = 1 / odd_val
+            if implied_prob < true_prob:  # Примерна стойностна логика
+                value_bets.append((bookmaker, odd_val))
+        except Exception:
+            continue
     return value_bets
 
-def main():
-    st.title("Стойностни Залози - Автоматичен Анализ")
-    st.write("Цел: Да показва само най-стойностните залози за деня - автоматично подбрани.")
+def analyze_and_display():
+    st.title("Стойностни Залози - Автоматичен Анализ (ЕС)")
+    st.write("Цел: Да показва само най-стойностните залози за деня - автоматично подбрани.\n")
 
     st.write("Зареждам мачове от основните европейски първенства...")
 
-    all_value_bets = []
-    for league in EUROPE_LEAGUES:
+    total_value_bets = 0
+
+    for league in EUROPEAN_LEAGUES:
         odds_data = fetch_odds(league)
-        if odds_data:
-            value_bets = calculate_value_bets(odds_data)
-            all_value_bets.extend(value_bets)
+        if odds_data is None:
+            continue
 
-    if not all_value_bets:
+        for match in odds_data:
+            teams = match.get('teams', [])
+            commence_time = match.get('commence_time', '')
+            if not teams or not commence_time:
+                continue
+            # Форматиране на време
+            try:
+                dt_obj = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                time_str = dt_obj.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                time_str = commence_time
+
+            # Събиране на коефициенти за пазари
+            for market in match.get('bookmakers', []):
+                bookmaker_name = market.get('title', 'Unknown')
+                for market_odds in market.get('markets', []):
+                    # Анализирай само пазари, които сме задали за тази лига
+                    if market_odds.get('key') not in LEAGUE_MARKETS[league]:
+                        continue
+
+                    outcomes = market_odds.get('outcomes', [])
+                    # Изграждане речник букмейкър -> коефициент за всеки изход
+                    odds_dict = {}
+                    for outcome in outcomes:
+                        odds_dict[outcome['name']] = outcome['price']
+
+                    # Примерен анализ: стойностни залози за краен изход "Home", "Away", "Draw"
+                    # Сложи тук твоята по-сложна логика за стойностни залози
+                    value_bets = calculate_value_bet(odds_dict)
+                    if value_bets:
+                        total_value_bets += 1
+                        st.write(f"**{teams[0]} vs {teams[1]}** ({time_str})")
+                        st.write(f"Лига: {league}")
+                        st.write(f"Пазар: {market_odds.get('key')}")
+                        st.write(f"Букмейкър: {bookmaker_name}")
+                        for bmk, odd_val in value_bets:
+                            st.write(f"- Залог: {bmk}, Коефициент: {odd_val}")
+                        st.write("---")
+
+    if total_value_bets == 0:
         st.info("Няма открити стойностни залози за днес.")
-    else:
-        st.success(f"Намерени {len(all_value_bets)} стойностни залози:")
-        for bet in all_value_bets:
-            teams = bet.get('teams')
-            if teams and isinstance(teams, list) and len(teams) == 2:
-                match_str = f"**{teams[0]} vs {teams[1]}**"
-            else:
-                match_str = "Неизвестен мач"
-
-            time_str = bet.get('time', 'Неизвестно време')
-            league = bet.get('league', 'Неизвестна лига')
-            bookmaker = bet.get('bookmaker', 'Неизвестен букмейкър')
-            bet_name = bet.get('bet', 'Неизвестен залог')
-            odd = bet.get('odd', '?')
-            avg_odd = bet.get('avg_odd', '?')
-
-            st.write(f"{match_str} ({time_str})")
-            st.write(f"Лига: {league}")
-            st.write(f"Букмейкър: {bookmaker}")
-            st.write(f"Залог: {bet_name}")
-            st.write(f"Коефициент: {odd} (Среден коефициент: {avg_odd})")
-            st.write("---")
 
 if __name__ == "__main__":
-    main()
+    analyze_and_display()
