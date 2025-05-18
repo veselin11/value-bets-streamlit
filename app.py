@@ -1,96 +1,44 @@
-// Основен JavaScript код за анализ и показване на стойностни залози
-// Включва пазари 1X2, над/под 2.5, гол/гол и очаквана стойност
+// Автоматичен анализатор на стойностни залози // Поддържани пазари: 1X2, Над/Под 2.5, Гол/Гол
 
-const API_KEY = '4474e2c1f44b1561daf6c481deb050cb';
-const SPORTS = [
-  'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
-  'soccer_germany_bundesliga', 'soccer_france_ligue_one',
-  'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga',
-  'soccer_greece_super_league', 'soccer_austria_bundesliga',
-  'soccer_switzerland_superleague', 'soccer_czech_czech_liga',
-  'soccer_poland_ekstraklasa', 'soccer_croatia_1_hnl'
-];
+const fetch = require("node-fetch"); const API_KEY = "YOUR_API_KEY"; const SPORTS = [ "soccer_epl", "soccer_uefa_champs_league", "soccer_italy_serie_a", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_france_ligue_one" ];
 
-const MARKETS = ['h2h', 'totals', 'both_teams_to_score'];
-const VALUE_THRESHOLD = 1.05; // Минимална стойност за валиден стойностен залог
+const TARGET_MARKETS = ["h2h", "totals", "btts"];
 
-async function fetchOddsForSport(sport) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${API_KEY}&regions=eu&markets=${MARKETS.join(',')}&oddsFormat=decimal&dateFormat=iso`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Грешка при зареждане на ${sport}`);
-  return response.json();
-}
+const MIN_VALUE_THRESHOLD = 1.05; // минимална стойност за стойностен залог const MIN_BOOKMAKERS = 2; // поне 2 различни букмейкъра
 
-function calculateValue(odds, impliedProb) {
-  return odds * impliedProb;
-}
+function calculateValue(odds, impliedProb) { return odds * impliedProb; }
 
-function getMarketValueBet(market, outcomes) {
-  let best = null;
-  outcomes.forEach(o => {
-    const implied = 1 / o.odds;
-    const value = calculateValue(o.odds, implied);
-    if (value >= VALUE_THRESHOLD) {
-      if (!best || value > best.value) {
-        best = { name: o.name, odds: o.odds, value, market };
+function impliedProbability(odds) { return 1 / odds; }
+
+async function fetchOddsForSport(sport) { const url = https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${API_KEY}&regions=eu&markets=${TARGET_MARKETS.join(",")}&oddsFormat=decimal&dateFormat=iso; const res = await fetch(url); if (!res.ok) throw new Error(Грешка при зареждане: ${sport}); return res.json(); }
+
+async function getValueBets() { let allValueBets = [];
+
+for (const sport of SPORTS) { try { const matches = await fetchOddsForSport(sport); for (const match of matches) { const outcomes = {}; for (const bookmaker of match.bookmakers || []) { for (const market of bookmaker.markets || []) { for (const outcome of market.outcomes) { const key = ${market.key}_${outcome.name}; if (!outcomes[key]) outcomes[key] = []; outcomes[key].push(outcome.price); } } }
+
+for (const [key, prices] of Object.entries(outcomes)) {
+      if (prices.length < MIN_BOOKMAKERS) continue;
+      const maxOdds = Math.max(...prices);
+      const avgProb = prices.reduce((a, b) => a + impliedProbability(b), 0) / prices.length;
+      const value = calculateValue(maxOdds, avgProb);
+
+      if (value >= MIN_VALUE_THRESHOLD) {
+        allValueBets.push({
+          match: match.home_team + " vs " + match.away_team,
+          time: match.commence_time,
+          market: key,
+          bestOdds: maxOdds.toFixed(2),
+          value: value.toFixed(2)
+        });
       }
     }
-  });
-  return best;
-}
-
-async function loadValueBets() {
-  const results = [];
-  for (let sport of SPORTS) {
-    try {
-      const games = await fetchOddsForSport(sport);
-      games.forEach(game => {
-        const { home_team, away_team, bookmakers, commence_time } = game;
-        bookmakers.forEach(bm => {
-          bm.markets.forEach(mkt => {
-            const bet = getMarketValueBet(mkt.key, mkt.outcomes);
-            if (bet) {
-              results.push({
-                home: home_team,
-                away: away_team,
-                bookmaker: bm.title,
-                commence_time,
-                ...bet
-              });
-            }
-          });
-        });
-      });
-    } catch (e) {
-      console.warn(e.message);
-    }
   }
-
-  displayValueBets(results);
+} catch (err) {
+  console.error(err.message);
 }
 
-function displayValueBets(bets) {
-  const container = document.getElementById('value-bets');
-  container.innerHTML = '';
-  if (bets.length === 0) {
-    container.innerHTML = '<p>Няма открити стойностни залози за днес.</p>';
-    return;
-  }
-
-  bets.sort((a, b) => b.value - a.value);
-  bets.forEach(bet => {
-    const row = document.createElement('div');
-    row.className = 'bet-row';
-    row.innerHTML = `
-      <strong>${bet.home} vs ${bet.away}</strong><br>
-      Час: ${new Date(bet.commence_time).toLocaleString()}<br>
-      Пазар: ${bet.market} | Залог: ${bet.name}<br>
-      Букмейкър: ${bet.bookmaker}<br>
-      Коефициент: ${bet.odds} | Стойност: ${bet.value.toFixed(2)}
-      <hr>
-    `;
-    container.appendChild(row);
-  });
 }
 
-document.addEventListener('DOMContentLoaded', loadValueBets);
+return allValueBets; }
+
+(async () => { const valueBets = await getValueBets(); if (valueBets.length === 0) { console.log("Няма открити стойностни залози за днес."); } else { console.log("Стойностни залози:"); valueBets.forEach((bet) => { console.log(${bet.match} | ${bet.market} | Коефициент: ${bet.bestOdds} | Стойност: ${bet.value}); }); } })();
