@@ -1,6 +1,6 @@
 import requests
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "4474e2c1f44b1561daf6c481deb050cb"
 SPORT_KEY = "soccer_epl"
 REGION = "eu"
 MARKET = "h2h"
