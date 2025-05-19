@@ -10,3 +10,4 @@ pytz
 matplotlib
 gitignore
 plotly.express
+iso8601
