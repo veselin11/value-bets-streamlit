@@ -1,9 +1,6 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
-from pytz import timezone
-import logging
 
 # Конфигурация
 try:
@@ -12,15 +9,8 @@ except KeyError:
     st.error("❌ Липсва API ключ в secrets.toml")
     st.stop()
 
-# Настройки
-LOCAL_TZ = timezone("Europe/Sofia")
-
-# Настройки на логирането
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-def get_all_soccer_leagues():
-    """Вземи всички футболни лиги с нова филтрация"""
+def get_active_leagues():
+    """Вземи активни футболни лиги с нова филтрация"""
     try:
         response = requests.get(
             "https://api.the-odds-api.com/v4/sports",
@@ -29,57 +19,55 @@ def get_all_soccer_leagues():
         )
         
         if response.status_code != 200:
-            logger.error(f"API Грешка: {response.status_code}")
+            st.error(f"API Грешка {response.status_code}: {response.text}")
             return []
             
-        return [
+        leagues = response.json()
+        soccer_leagues = [
             league["key"] 
-            for league in response.json()
-            if league["sport_key"].startswith("soccer") 
-            and league["active"] is True
+            for league in leagues 
+            if league["sport_key"] == "soccer" 
+            and league["active"] 
+            and "match" in league["description"].lower()
         ]
         
+        return soccer_leagues
+        
     except Exception as e:
-        logger.error(f"Грешка при взимане на лиги: {str(e)}")
+        st.error(f"Грешка при връзка: {str(e)}")
         return []
 
 def main():
-    st.set_page_config(page_title="Global Bets Solution", layout="wide")
-    st.title("⚽ Value Bets - Работещо Решение")
+    st.set_page_config(page_title="Работещо Решение", layout="wide")
+    st.title("✅ Демо на Работещо Решение")
     
-    # Зареди лиги
-    leagues = get_all_soccer_leagues()
+    # Ръчен тестер на API
+    with st.expander("🔍 Тест на API ключ"):
+        if st.button("Тествай връзка с API"):
+            test_response = requests.get(
+                "https://api.the-odds-api.com/v4/sports",
+                params={"apiKey": ODDS_API_KEY}
+            )
+            if test_response.status_code == 200:
+                st.success("API ключ работи успешно!")
+                st.json(test_response.json()[:1])  # Покажи първата лига
+            else:
+                st.error(f"Грешка {test_response.status_code}: {test_response.text}")
+    
+    # Вземи лиги
+    leagues = get_active_leagues()
     
     if not leagues:
-        st.error("Не са намерени активни футболни лиги")
+        st.error("""
+            Няма намерени лиги. Възможни причини:
+            1. Невалиден API ключ
+            2. Няма активни мачове в момента
+            3. Проблем с API сървъра
+            """)
         return
     
-    st.success(f"Намерени {len(leagues)} лиги")
-    
-    # Покажи първи 10 мача от първата лига за демонстрация
-    if st.button("Покажи примерни мачове"):
-        try:
-            matches = requests.get(
-                f"https://api.the-odds-api.com/v4/sports/{leagues[0]}/odds",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "eu",
-                    "markets": "h2h"
-                },
-                timeout=15
-            ).json()
-            
-            st.subheader(f"Примерни мачове от {leagues[0]}:")
-            for match in matches[:5]:
-                commence_time = datetime.fromisoformat(match["commence_time"]).astimezone(LOCAL_TZ)
-                st.write(f"""
-                    - {match["home_team"]} vs {match["away_team"]}
-                    ⏰ {commence_time.strftime("%d.%m %H:%M")}
-                    📊 {len(match["bookmakers"])} букмейкъра
-                """)
-                
-        except Exception as e:
-            st.error(f"Грешка при взимане на мачове: {str(e)}")
+    st.success(f"Намерени {len(leagues)} активни лиги")
+    st.write("Примерни лиги:", leagues[:5])  # Покажи първите 5 лиги
 
 if __name__ == "__main__":
     main()
