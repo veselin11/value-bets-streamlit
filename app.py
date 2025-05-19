@@ -1,39 +1,38 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
-from pytz import timezone
-import iso8601
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from pytz import timezone as tz
 
 # Конфигурация
 try:
     ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
 except KeyError:
-    st.error("Липсва API ключ")
+    st.error("❌ Липсва API ключ в secrets.toml")
     st.stop()
 
 # Настройки
-LOCAL_TZ = timezone("Europe/Sofia")
-SPORTS = ["soccer_epl", "soccer_laliga", "soccer_bundesliga", "soccer_serie_a", "soccer_ligue1"]
-DAYS_AHEAD = 3  # Вземи мачове за следващите 3 дни
+LOCAL_TZ = tz("Europe/Sofia")
+SPORTS = {
+    "soccer_epl": "Англия - Висша Лига",
+    "soccer_spain_la_liga": "Испания - Ла Лига",
+    "soccer_germany_bundesliga": "Германия - Бундеслига",
+    "soccer_italy_serie_a": "Италия - Серия А",
+    "soccer_france_ligue_one": "Франция - Лига 1"
+}
+DAYS_AHEAD = 3
 
-def parse_iso_time(time_str: str) -> Optional[datetime]:
-    """Парсване на ISO време със защита от грешки"""
-    try:
-        dt = iso8601.parse_date(time_str)
-        return dt.astimezone(LOCAL_TZ)
-    except Exception as e:
-        st.error(f"Грешка при парсване на време: {str(e)}")
-        return None
+def get_utc_iso(time: datetime) -> str:
+    """Конвертира време към UTC ISO формат"""
+    return time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 @st.cache_data(ttl=600)
 def get_matches(sport_key: str):
-    """Вземи мачове за следващите DAYS_AHEAD дни"""
+    """Вземи мачове от API"""
     try:
-        now_utc = datetime.utcnow().replace(tzinfo=timezone("UTC"))
-        date_from = now_utc.isoformat()
-        date_to = (now_utc + timedelta(days=DAYS_AHEAD)).isoformat()
+        now = datetime.now(timezone.utc)
+        date_from = get_utc_iso(now)
+        date_to = get_utc_iso(now + timedelta(days=DAYS_AHEAD))
 
         response = requests.get(
             f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
@@ -46,68 +45,69 @@ def get_matches(sport_key: str):
             },
             timeout=15
         )
-        
+
+        if response.status_code == 401:
+            st.error("⛔ Невалиден API ключ")
+            return []
         if response.status_code != 200:
-            st.error(f"API грешка: {response.status_code} - {response.text}")
             return []
 
         return response.json()
     except Exception as e:
-        st.error(f"Грешка при заявка: {str(e)}")
+        st.error(f"🚨 Грешка при връзка: {str(e)}")
         return []
 
 def main():
-    st.set_page_config(page_title="Мачове", layout="wide")
-    st.title("⚽ Програма за мачове")
+    st.set_page_config(page_title="⚽ Live Matches", layout="wide")
+    st.title("🔴 Live Мачове Трекер")
     
     all_matches = []
     
-    # Вземи мачове за всички лиги
-    for sport_key in SPORTS:
-        matches = get_matches(sport_key)
-        
-        for match in matches:
-            match_time = parse_iso_time(match.get("commence_time", ""))
-            if not match_time:
-                continue
-                
-            time_diff = match_time - datetime.now(LOCAL_TZ)
-            if time_diff < timedelta(0):
-                continue  # Пропусни минали мачове
-                
-            all_matches.append({
-                "Лига": sport_key.replace("soccer_", "").upper(),
-                "Домакин": match.get("home_team", "?"),
-                "Гост": match.get("away_team", "?"),
-                "Дата": match_time.strftime("%d.%m.%Y"),
-                "Час": match_time.strftime("%H:%M"),
-                "До мача": f"{time_diff.total_seconds()//3600:.0f}ч",
-                "Букмейкъри": len(match.get("bookmakers", []))
-            })
+    for sport_key, sport_name in SPORTS.items():
+        with st.spinner(f"Зареждане на {sport_name}..."):
+            matches = get_matches(sport_key)
+            
+            for match in matches:
+                try:
+                    match_time = datetime.fromisoformat(match["commence_time"]).astimezone(LOCAL_TZ)
+                    if match_time < datetime.now(LOCAL_TZ):
+                        continue
+                        
+                    all_matches.append({
+                        "Лига": sport_name,
+                        "Домакин": match["home_team"],
+                        "Гост": match["away_team"],
+                        "Дата": match_time.strftime("%d.%m"),
+                        "Час": match_time.strftime("%H:%M"),
+                        "Букмейкъри": len(match["bookmakers"])
+                    })
+                except KeyError:
+                    continue
 
     if not all_matches:
         st.warning("""
-            Няма намерени мачове. Възможни причини:
-            1. Няма предстоящи мачове в избраните лиги
-            2. Проблем с API ключа
-            3. Ограничение на API заявките
+            🏟️ Няма намерени мачове. Възможни причини:
+            1. Няма предстоящи мачове в следващите 3 дни
+            2. Изчерпани са API заявките
+            3. Проблем с интернет връзката
             """)
         return
 
-    # Покажи данните
+    # Сортирай и покажи данните
     df = pd.DataFrame(all_matches).sort_values(["Дата", "Час"])
     
-    st.subheader(f"Намерени мачове: {len(df)}")
+    st.subheader(f"🔍 Намерени мачове: {len(df)}")
     st.dataframe(
         df,
         column_config={
             "Букмейкъри": st.column_config.NumberColumn(
-                format="%d ⚖️",
+                format="%d 🏦",
                 help="Брой предлагащи букмейкъри"
             )
         },
         hide_index=True,
-        use_container_width=True
+        use_container_width=True,
+        height=600
     )
 
 if __name__ == "__main__":
