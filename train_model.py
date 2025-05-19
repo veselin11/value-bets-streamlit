@@ -1,34 +1,32 @@
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
 import joblib
 
-def train_model():
-    df = pd.read_csv("football_data.csv")
+# Зареди данни
+data = pd.read_csv("historical_matches.csv")
 
-    # Ако липсва колоната ValueBet, създай я с примерна логика
-    if "ValueBet" not in df.columns:
-        df["ValueBet"] = (df["Коеф"] > 2.0).astype(int)
+# Дефинирай фийчъри и таргет
+X = data[["home_win_rate", "away_win_rate", "h2h_home_wins"]]
+y = data["result"]
 
-    enc_team1 = LabelEncoder()
-    enc_team2 = LabelEncoder()
-    enc_league = LabelEncoder()
+# Нормализирай данните
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-    df["Отбор 1"] = enc_team1.fit_transform(df["Отбор 1"])
-    df["Отбор 2"] = enc_team2.fit_transform(df["Отбор 2"])
-    df["Лига"] = enc_league.fit_transform(df["Лига"])
+# Раздели данните
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2)
 
-    X = df[["Отбор 1", "Отбор 2", "Лига", "Коеф"]]
-    y = df["ValueBet"]
+# Обучи модела
+model = LogisticRegression()
+model.fit(X_train, y_train)
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
+# Оцени модела
+y_pred = model.predict(X_test)
+print(f"Точност: {accuracy_score(y_test, y_pred)*100:.2f}%")
 
-    joblib.dump(model, "value_bet_model.pkl")
-    joblib.dump({
-        "team1": enc_team1,
-        "team2": enc_team2,
-        "league": enc_league
-    }, "label_encoders.pkl")
-
-    print("Моделът е обучен и записан успешно.")
+# Запази модела и скалера
+joblib.dump(model, "model.pkl")
+joblib.dump(scaler, "scaler.pkl")
