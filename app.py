@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 # ================== КОНФИГУРАЦИЯ ================== #
-FOOTBALL_DATA_API_KEY = "ВЪВЕДИ_ТВОЯ_КЛЮЧ_ЗА_FOOTBALL_DATA"
+FOOTBALL_DATA_API_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 SPORT = "soccer_epl"
 
