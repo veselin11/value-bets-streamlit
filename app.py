@@ -9,7 +9,7 @@ import joblib
 
 # ================== КОНФИГУРАЦИЯ ================== #
 FOOTBALL_DATA_API_KEY = "ВЪВЕДИ_ТВОЯ_КЛЮЧ_ЗА_FOOTBALL_DATA"
-ODDS_API_KEY = "ВЪВЕДИ_ТВОЯ_КЛЮЧ_ЗА_ODDS_API"
+ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 SPORT = "soccer_epl"
 
 TEAM_ID_MAPPING = {
