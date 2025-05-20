@@ -5,7 +5,7 @@ from datetime import datetime
 from utils import calculate_implied_probability, calculate_value_bets, get_team_stats
 
 # Настройки
-API_KEY = "ВЪВЕДИ_ТВОЯ_КЛЮЧ_ЗА_ODDS_API"
+API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 SPORT = "soccer_epl"
 REGIONS = "eu"
 MARKETS = "h2h"
