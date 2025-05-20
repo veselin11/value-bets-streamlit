@@ -11,3 +11,7 @@ matplotlib
 gitignore
 plotly.express
 iso8601
+scipy.stats
+LogisticRegression
+poisson
+os
