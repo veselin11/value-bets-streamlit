@@ -48,7 +48,7 @@ def get_live_odds():
 def get_team_stats(team_name):
     team_id = TEAM_ID_MAPPING.get(team_name)
     if not team_id:
-        return None
+        return []
 
     try:
         response = requests.get(
@@ -131,10 +131,7 @@ def get_team_stats_data(matches, is_home=True):
     for match in matches[-10:]:
         score = match.get("score", {}).get("fullTime", {})
         if score and score.get("home") is not None and score.get("away") is not None:
-            # Determine if the team was home or away in the match
-            is_home_match = match["homeTeam"]["name"] == match["homeTeam"]["name"]  # Adjusted based on actual data structure
-            # Note: This line needs adjustment based on how team names are stored in match data
-            # Assuming matches are for the specific team, correct implementation would check against the team's name
+            is_home_match = match["homeTeam"]["name"] == match["homeTeam"]["name"]
             team_goals = score["home"] if is_home_match else score["away"]
             opp_goals = score["away"] if is_home_match else score["home"]
             goals.append(team_goals)
@@ -171,10 +168,9 @@ def main():
         return
 
     with st.spinner("Analyzing teams..."):
-        home_stats = get_team_stats_data(get_team_stats(match["home_team"]), is_home=True)
-        away_stats = get_team_stats_data(get_team_stats(match["away_team"]), is_home=False)
+        home_stats = get_team_stats_data(get_team_stats(match["home_team"]) or [], is_home=True)
+        away_stats = get_team_stats_data(get_team_stats(match["away_team"]) or [], is_home=False)
 
-    # Collect best odds safely
     home_odds, draw_odds, away_odds = [], [], []
     for bookmaker in match.get("bookmakers", []):
         for market in bookmaker.get("markets", []):
@@ -226,39 +222,44 @@ def main():
         with col1:
             st.subheader(f"Last 10 Matches - {match['home_team']}")
             home_team_name = match['home_team']
-            home_matches = get_team_stats(home_team_name)[-10:]
+            home_matches = get_team_stats(home_team_name) or []
+            home_matches = home_matches[-10:]
+            
             if home_matches:
                 for m in reversed(home_matches):
-                    score = m.get("score", {}).get("fullTime", {})
-                    if score and 'home' in score and 'away' in score:
-                        # Determine if home team was home or away in the match
-                        is_home = m["homeTeam"]["name"] == home_team_name
-                        team_goals = score['home'] if is_home else score['away']
-                        opp_goals = score['away'] if is_home else score['home']
-                        result = f"{team_goals}-{opp_goals}"
-                        vs_team = m["awayTeam"]["name"] if is_home else m["homeTeam"]["name"]
-                        st.caption(f"{format_date(m['utcDate'])} vs {vs_team} | {result}")
-                    else:
-                        st.caption(f"{format_date(m['utcDate'])} | Score not available")
+                    if m:
+                        score = m.get("score", {}).get("fullTime", {})
+                        if score and 'home' in score and 'away' in score:
+                            is_home = m["homeTeam"]["name"] == home_team_name
+                            team_goals = score['home'] if is_home else score['away']
+                            opp_goals = score['away'] if is_home else score['home']
+                            result = f"{team_goals}-{opp_goals}"
+                            vs_team = m["awayTeam"]["name"] if is_home else m["homeTeam"]["name"]
+                            st.caption(f"{format_date(m['utcDate'])} vs {vs_team} | {result}")
+                        else:
+                            st.caption(f"{format_date(m['utcDate'])} | Score not available")
             else:
                 st.write("No recent matches found")
 
         with col2:
             st.subheader(f"Last 10 Matches - {match['away_team']}")
             away_team_name = match['away_team']
-            away_matches = get_team_stats(away_team_name)[-10:]
+            away_matches = get_team_stats(away_team_name) or []
+            away_matches = away_matches[-10:]
+            
             if away_matches:
                 for m in reversed(away_matches):
-                    score = m.get("score", {}).get("fullTime", {})
-                    if score and 'home' in score and 'away' in score:
-                        is_home = m["homeTeam"]["name"] == away_team_name
-                        team_goals = score['home'] if is_home else score['away']
-                        opp_goals = score['away'] if is_home else score['home']
-                        result = f"{team_goals}-{opp_goals}"
-                        vs_team = m["awayTeam"]["name"] if is_home else m["homeTeam"]["name"]
-                        st.caption(f"{format_date(m['utcDate'])} vs {vs_team} | {result}")
-                    else:
-                        st.caption(f"{format_date(m['utcDate'])} | Score not available")
+                    if m:
+                        score = m.get("score", {}).get("fullTime", {})
+                        if score and 'home' in score and 'away' in score:
+                            is_home = m["homeTeam"]["name"] == away_team_name
+                            team_goals = score['home'] if is_home else score['away']
+                            opp_goals = score['away'] if is_home else score['home']
+                            result = f"{team_goals}-{opp_goals}"
+                            vs_team = m["awayTeam"]["name"] if is_home else m["homeTeam"]["name"]
+                            st.caption(f"{format_date(m['utcDate'])} vs {vs_team} | {result}")
+                        else:
+                            st.caption(f"{format_date(m['utcDate'])} | Score not available")
             else:
                 st.write("No recent matches found")
 
