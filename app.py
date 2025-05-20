@@ -36,7 +36,11 @@ TEAM_ID_MAPPING = {
     "Wolves": 76,
     "Bournemouth": 1044,
     
-    # Добавете други отбори за други лиги при необходимост
+    # Австралийска A-Лига
+    "Melbourne City": 1833,
+    "Western United FC": 111974,
+    "Sydney FC": 1838,
+    "Melbourne Victory": 1837,
 }
 
 # ================== API FUNCTIONS ================== #
@@ -49,7 +53,13 @@ def get_soccer_sports():
         )
         response.raise_for_status()
         sports = response.json()
-        return [sport['key'] for sport in sports if sport['group'] == 'Soccer']
+        
+        valid_sports = []
+        for sport in sports:
+            if sport['group'] == 'Soccer' and 'h2h' in sport['markets']:
+                valid_sports.append(sport['key'])
+        
+        return valid_sports
     except Exception as e:
         st.error(f"Sports API Error: {str(e)}")
         return []
@@ -69,12 +79,19 @@ def get_live_odds():
                         "regions": "eu",
                         "markets": "h2h",
                         "oddsFormat": "decimal"
-                    }
+                    },
+                    timeout=10
                 )
+                
+                if response.status_code == 422:
+                    st.warning(f"Skipping {sport} - market not supported")
+                    continue
+                
                 response.raise_for_status()
                 matches = response.json()
+                
                 for match in matches:
-                    match['sport_key'] = sport  # Добавяне на идентификатор на лигата
+                    match['sport_key'] = sport
                 all_matches.extend(matches)
             
             except requests.exceptions.HTTPError as e:
@@ -84,6 +101,24 @@ def get_live_odds():
         return all_matches
     except Exception as e:
         st.error(f"Odds API Error: {str(e)}")
+        return []
+
+@st.cache_data(ttl=3600)
+def get_team_stats(team_name):
+    team_id = TEAM_ID_MAPPING.get(team_name)
+    if not team_id:
+        st.warning(f"No ID mapping found for {team_name}")
+        return []
+    try:
+        response = requests.get(
+            f"https://api.football-data.org/v4/teams/{team_id}/matches",
+            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
+            params={"status": "FINISHED"}
+        )
+        response.raise_for_status()
+        return response.json().get("matches", [])
+    except Exception as e:
+        st.error(f"Stats Error for {team_name}: {str(e)}")
         return []
 
 # ================== ANALYTICS ================== #
