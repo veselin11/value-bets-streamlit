@@ -12,13 +12,13 @@ from datetime import datetime
 # ================== CONFIGURATION ================== #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-SPORT = "soccer_epl"
 
 TEAM_ID_MAPPING = {
+    # Премиър Лига
     "Arsenal": 57,
     "Aston Villa": 58,
     "Brentford": 402,
-    "Brighton": 397,  # Updated if necessary
+    "Brighton": 397,
     "Burnley": 328,
     "Chelsea": 61,
     "Crystal Palace": 354,
@@ -33,44 +33,57 @@ TEAM_ID_MAPPING = {
     "Sheffield United": 356,
     "Tottenham Hotspur": 73,
     "West Ham United": 563,
-    "Wolves": 76,  # Updated if necessary
-    "Bournemouth": 1044  # Corrected name
+    "Wolves": 76,
+    "Bournemouth": 1044,
+    
+    # Добавете други отбори за други лиги при необходимост
 }
 
 # ================== API FUNCTIONS ================== #
 @st.cache_data(ttl=3600)
-def get_live_odds():
+def get_soccer_sports():
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "eu",
-                "markets": "h2h",
-                "oddsFormat": "decimal"
-            }
+            "https://api.the-odds-api.com/v4/sports",
+            params={"apiKey": ODDS_API_KEY}
         )
         response.raise_for_status()
-        return response.json()
+        sports = response.json()
+        return [sport['key'] for sport in sports if sport['group'] == 'Soccer']
     except Exception as e:
-        st.error(f"Odds API Error: {str(e)}")
+        st.error(f"Sports API Error: {str(e)}")
         return []
 
 @st.cache_data(ttl=3600)
-def get_team_stats(team_name):
-    team_id = TEAM_ID_MAPPING.get(team_name)
-    if not team_id:
-        return None
+def get_live_odds():
     try:
-        response = requests.get(
-            f"https://api.football-data.org/v4/teams/{team_id}/matches",
-            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
-            params={"status": "FINISHED"}
-        )
-        response.raise_for_status()
-        return response.json().get("matches", [])
+        all_matches = []
+        soccer_sports = get_soccer_sports()
+        
+        for sport in soccer_sports:
+            try:
+                response = requests.get(
+                    f"https://api.the-odds-api.com/v4/sports/{sport}/odds",
+                    params={
+                        "apiKey": ODDS_API_KEY,
+                        "regions": "eu",
+                        "markets": "h2h",
+                        "oddsFormat": "decimal"
+                    }
+                )
+                response.raise_for_status()
+                matches = response.json()
+                for match in matches:
+                    match['sport_key'] = sport  # Добавяне на идентификатор на лигата
+                all_matches.extend(matches)
+            
+            except requests.exceptions.HTTPError as e:
+                st.warning(f"Could not get odds for {sport}: {str(e)}")
+                continue
+        
+        return all_matches
     except Exception as e:
-        st.error(f"Stats Error for {team_name}: {str(e)}")
+        st.error(f"Odds API Error: {str(e)}")
         return []
 
 # ================== ANALYTICS ================== #
@@ -137,7 +150,7 @@ def get_team_stats_data(matches, team_name, is_home=True):
         else:
             if match['awayTeam']['name'] == team_name:
                 relevant_matches.append(match)
-    recent_matches = relevant_matches[-10:]  # Take last 10 relevant matches
+    recent_matches = relevant_matches[-10:]
     goals = []
     wins = 0
     for match in recent_matches:
@@ -168,10 +181,10 @@ def main():
 
     selected_match = st.selectbox(
         "Select Match:",
-        [f'{m["home_team"]} vs {m["away_team"]}' for m in matches],
+        [f'{m["home_team"]} vs {m["away_team"]} ({m["sport_key"]})' for m in matches],
         index=0
     )
-    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
+    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]} ({m["sport_key"]})' == selected_match)
 
     with st.spinner("Analyzing teams..."):
         home_team = match["home_team"]
