@@ -236,7 +236,8 @@ def main():
         
         with col1:
             st.subheader(f"Last 10 Matches - {match['home_team']}")
-            home_matches = get_team_stats(match["home_team"])[-10:]
+            home_stats_raw = get_team_stats(match["home_team"])
+            home_matches = home_stats_raw[-10:] if home_stats_raw else []
             if home_matches:
                 for m in reversed(home_matches):
                     result = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
@@ -246,33 +247,4 @@ def main():
         
         with col2:
             st.subheader(f"Last 10 Matches - {match['away_team']}")
-            away_matches = get_team_stats(match["away_team"])[-10:]
-            if away_matches:
-                for m in reversed(away_matches):
-                    result = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
-                    st.caption(f"{format_date(m['utcDate'])} | {result}")
-            else:
-                st.write("No recent matches found")
-    
-    with tab3:
-        if st.button("Generate AI Prediction"):
-            with st.spinner("Analyzing..."):
-                prediction = predict_with_ai(home_stats, away_stats)
-            
-            if prediction is not None:
-                st.subheader("🤖 AI Prediction Results")
-                cols = st.columns(3)
-                labels = ["Home Win", "Draw", "Away Win"]
-                colors = ["#4CAF50", "#FFC107", "#2196F3"]
-                
-                for col, label, prob, color in zip(cols, labels, prediction, colors):
-                    with col:
-                        st.markdown(f"<h3 style='color:{color}'>{label}</h3>", 
-                                   unsafe_allow_html=True)
-                        st.markdown(f"<h2>{prob*100:.1f}%</h2>", 
-                                   unsafe_allow_html=True)
-                
-                st.progress(max(prediction))
-
-if __name__ == "__main__":
-    main()
+            away_stats_raw
