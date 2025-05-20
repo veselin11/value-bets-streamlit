@@ -44,6 +44,25 @@ def get_live_odds(date_from, date_to):
         st.error(f"Odds API Error: {str(e)}")
         return []
 
+@st.cache_data(ttl=3600)
+def get_team_stats(team_name):
+    team_id = TEAM_ID_MAPPING.get(team_name)
+    if not team_id:
+        st.warning(f"No team ID found for {team_name}")
+        return []
+
+    try:
+        response = requests.get(
+            f"https://api.football-data.org/v4/teams/{team_id}/matches",
+            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
+            params={"status": "FINISHED", "limit": 10}
+        )
+        response.raise_for_status()
+        return response.json().get("matches", [])
+    except Exception as e:
+        st.error(f"Error retrieving matches for {team_name}: {str(e)}")
+        return []
+
 # ================== DATE HANDLING ==================
 def get_date_range(selected_date):
     start = datetime.combine(selected_date, datetime.min.time()).isoformat() + "Z"
@@ -106,7 +125,6 @@ def get_team_stats_data(matches, team_name):
 
     for match in matches[-10:]:
         try:
-            # Determine if team was home or away in the match
             is_home = match["homeTeam"]["name"] == team_name
             score = match["score"]["fullTime"]
             
@@ -129,7 +147,6 @@ def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
     st.title("⚽ Smart Betting Analyzer")
     
-    # Date selector
     col_date, _ = st.columns([0.2, 0.8])
     with col_date:
         selected_date = st.date_input(
@@ -139,10 +156,8 @@ def main():
             max_value=datetime.today() + timedelta(days=365)
         )
     
-    # Generate date range
     date_from, date_to = get_date_range(selected_date)
     
-    # Load matches
     with st.spinner(f"🔍 Loading matches for {selected_date.strftime('%d %b %Y')}..."):
         matches = get_live_odds(date_from, date_to)
 
@@ -150,7 +165,6 @@ def main():
         st.warning(f"⚠️ No matches found for {selected_date.strftime('%d %b %Y')}")
         return
 
-    # Match selection
     try:
         match_options = [f'{m["home_team"]} vs {m["away_team"]}' for m in matches]
         selected_match = st.selectbox("⚽ Select Match:", match_options)
@@ -159,18 +173,21 @@ def main():
         st.error("❌ Selected match not found")
         return
 
-    # Team analysis
     with st.spinner("📊 Analyzing teams..."):
         home_team = match["home_team"]
         away_team = match["away_team"]
         
-        home_matches = get_team_stats(home_team) or []
-        away_matches = get_team_stats(away_team) or []
+        home_matches = get_team_stats(home_team)
+        away_matches = get_team_stats(away_team)
         
         home_stats = get_team_stats_data(home_matches, home_team)
         away_stats = get_team_stats_data(away_matches, away_team)
 
-    # ... (rest of the code remains the same) ...
+        st.subheader("Team Statistics")
+        st.write(f"**{home_team}** - Avg Goals: {home_stats['avg_goals']:.2f}, Win Rate: {home_stats['win_rate']:.2%}")
+        st.write(f"**{away_team}** - Avg Goals: {away_stats['avg_goals']:.2f}, Win Rate: {away_stats['win_rate']:.2%}")
+
+        # Additional analysis like Poisson probabilities or ML predictions can be added here
 
 if __name__ == "__main__":
     main()
