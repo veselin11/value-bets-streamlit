@@ -1,215 +1,122 @@
 import streamlit as st
 import requests
-import numpy as np
-from scipy.stats import poisson
-import joblib
 from datetime import datetime
+import pytz
 
-# ================== CONFIGURATION ================== #
-FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
-ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-SPORT = "soccer_epl"
+# Настройки и API ключове
+THE_ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+FOOTBALL_DATA_API_KEY = "81e6d3a2f88f4d0d8a6b45f4c8d21568"
+SPORT = "soccer"
+REGIONS = "eu"
+MARKETS = "h2h,totals,btts"
+BOOKMAKERS = "pinnacle,bet365,unibet,bwin"
 
 TEAM_ID_MAPPING = {
+    "Manchester City": 65,
     "Arsenal": 57,
-    "Aston Villa": 58,
-    "Brentford": 402,
-    "Brighton": 397,
-    "Burnley": 328,
+    "Liverpool": 64,
     "Chelsea": 61,
-    "Crystal Palace": 354,
+    "Tottenham": 73,
+    "Manchester United": 66,
+    "Aston Villa": 58,
+    "Brighton": 397,
+    "West Ham": 563,
+    "Newcastle": 67,
     "Everton": 62,
     "Fulham": 63,
-    "Liverpool": 64,
-    "Luton": 389,  # Updated from Luton Town
-    "Manchester City": 65,
-    "Manchester United": 66,
-    "Newcastle United": 67,
+    "Wolves": 76,
+    "Crystal Palace": 354,
+    "Bournemouth": 1044,
+    "Brentford": 402,
     "Nottingham Forest": 351,
+    "Burnley": 328,
     "Sheffield United": 356,
-    "Tottenham": 73,  # Updated from Tottenham Hotspur
-    "West Ham": 563,  # Updated from West Ham United
-    "Wolves": 76,     # Updated from Wolverhampton Wanderers
-    "Bournemouth": 1044
+    "Luton": 389
 }
 
-# ================== API FUNCTIONS ================== #
-@st.cache_data(ttl=3600)
+@st.cache_data
 def get_live_odds():
-    try:
-        response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "eu",
-                "markets": "h2h",
-                "oddsFormat": "decimal"
-            }
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Odds API Error: {str(e)}")
-        return []
-
-@st.cache_data(ttl=3600)
-def get_team_matches(team_name):
-    team_id = TEAM_ID_MAPPING.get(team_name)
-    if not team_id:
-        return []
-    try:
-        response = requests.get(
-            f"https://api.football-data.org/v4/teams/{team_id}/matches",
-            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
-            params={"status": "FINISHED", "limit": 30}
-        )
-        response.raise_for_status()
-        return response.json().get("matches", [])
-    except Exception as e:
-        st.error(f"Error getting matches for {team_name}: {str(e)}")
-        return []
-
-# ================== DATA PROCESSING ================== #
-def process_matches(matches, team_name, is_home=True):
-    filtered = []
-    for match in matches:
-        if is_home:
-            if match["homeTeam"]["name"] == team_name:
-                filtered.append(match)
-        else:
-            if match["awayTeam"]["name"] == team_name:
-                filtered.append(match)
-    
-    recent_matches = filtered[-10:] if len(filtered) >= 10 else filtered
-    
-    goals = []
-    wins = 0
-    for match in recent_matches:
-        if is_home:
-            team_goals = match["score"]["fullTime"]["home"]
-            opponent_goals = match["score"]["fullTime"]["away"]
-        else:
-            team_goals = match["score"]["fullTime"]["away"]
-            opponent_goals = match["score"]["fullTime"]["home"]
-        
-        goals.append(team_goals)
-        if team_goals > opponent_goals:
-            wins += 1
-    
-    return {
-        "avg_goals": np.mean(goals) if goals else 0,
-        "win_rate": wins/len(recent_matches) if recent_matches else 0
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
+    params = {
+        "apiKey": THE_ODDS_API_KEY,
+        "regions": REGIONS,
+        "markets": MARKETS,
+        "oddsFormat": "decimal",
+        "bookmakers": BOOKMAKERS
     }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error("Грешка при зареждане на коефициенти.")
+        return []
 
-# ================== CALCULATIONS ================== #
-def calculate_poisson(home_avg, away_avg):
-    max_goals = 6  # Reduced for performance
-    home_prob, draw_prob, away_prob = 0, 0, 0
-    
-    for i in range(max_goals):
-        for j in range(max_goals):
-            prob = poisson.pmf(i, home_avg) * poisson.pmf(j, away_avg)
-            if i > j:
-                home_prob += prob
-            elif i == j:
-                draw_prob += prob
-            else:
-                away_prob += prob
-                
-    total = home_prob + draw_prob + away_prob
-    return home_prob/total, draw_prob/total, away_prob/total
+@st.cache_data
+def get_team_stats(team_name):
+    if team_name not in TEAM_ID_MAPPING:
+        return None
+    team_id = TEAM_ID_MAPPING[team_name]
+    url = f"https://api.football-data.org/v4/teams/{team_id}/matches?status=FINISHED&limit=5"
+    headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        matches = response.json().get("matches", [])
+        wins = sum(1 for m in matches if m["score"]["winner"] == "HOME_TEAM" and m["homeTeam"]["id"] == team_id or
+                                     m["score"]["winner"] == "AWAY_TEAM" and m["awayTeam"]["id"] == team_id)
+        goals_for = sum(m["score"]["fullTime"]["home"] if m["homeTeam"]["id"] == team_id else m["score"]["fullTime"]["away"] for m in matches)
+        goals_against = sum(m["score"]["fullTime"]["away"] if m["homeTeam"]["id"] == team_id else m["score"]["fullTime"]["home"] for m in matches)
+        return {"wins": wins, "goals_for": goals_for, "goals_against": goals_against}
+    return None
 
-# ================== UI ================== #
-def format_date(iso_str):
-    return datetime.fromisoformat(iso_str.replace("Z", "")).strftime("%d/%m/%Y")
+def calculate_value(odds, est_prob):
+    if odds == 0:
+        return 0
+    implied_prob = 1 / odds
+    value = est_prob - implied_prob
+    return round(value, 3)
 
-def main():
-    st.set_page_config(page_title="Football Analyzer", layout="wide")
-    st.title("Premier League Match Analyzer")
-    
-    # Load live odds
-    with st.spinner("Loading live matches..."):
-        matches = get_live_odds()
-    
-    if not matches:
-        st.warning("No matches available")
-        return
-    
-    # Match selection
-    match_names = [f'{m["home_team"]} vs {m["away_team"]}' for m in matches]
-    selected = st.selectbox("Select Match", match_names)
-    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected)
-    
-    # Process teams
-    home_team = match["home_team"]
-    away_team = match["away_team"]
-    
-    with st.spinner("Analyzing teams..."):
-        # Get matches data
-        home_matches = get_team_matches(home_team)
-        away_matches = get_team_matches(away_team)
-        
-        # Process stats
-        home_stats = process_matches(home_matches, home_team, is_home=True)
-        away_stats = process_matches(away_matches, away_team, is_home=False)
-    
-    # Get best odds
-    best_odds = {"home": 1.0, "draw": 1.0, "away": 1.0}
-    for bookmaker in match.get("bookmakers", []):
-        for outcome in bookmaker["markets"][0]["outcomes"]:
-            name = outcome["name"]
-            price = outcome["price"]
-            if name == home_team and price > best_odds["home"]:
-                best_odds["home"] = price
-            elif name == "Draw" and price > best_odds["draw"]:
-                best_odds["draw"] = price
-            elif name == away_team and price > best_odds["away"]:
-                best_odds["away"] = price
-    
-    # Calculate probabilities
-    home_prob, draw_prob, away_prob = calculate_poisson(
-        home_stats["avg_goals"], 
-        away_stats["avg_goals"]
-    )
-    
-    # Display results
-    col1, col2, col3 = st.columns(3)
+st.title("Стойностни залози – Всички лиги")
+matches = get_live_odds()
+
+if not matches:
+    st.warning("Няма налични мачове в момента.")
+else:
+    match_names = [f'{m["home_team"]} vs {m["away_team"]} - {m.get("sport_title", "")}' for m in matches]
+    selection = st.selectbox("Избери мач", match_names)
+    match = matches[match_names.index(selection)]
+
+    st.subheader(f'{match["home_team"]} vs {match["away_team"]}')
+    start_time = datetime.fromisoformat(match["commence_time"].replace("Z", "+00:00")).astimezone(pytz.timezone("Europe/Sofia"))
+    st.caption(f"Начален час: {start_time.strftime('%d.%m.%Y %H:%M')} ч.")
+    st.caption(f"Лига: {match.get('sport_title', 'Unknown')}")
+
+    st.markdown("### Статистики (ако са налични):")
+    col1, col2 = st.columns(2)
     with col1:
-        st.subheader(f"🏠 {home_team}")
-        st.metric("Avg Goals", f"{home_stats['avg_goals']:.1f}")
-        st.metric("Win Rate", f"{home_stats['win_rate']:.0%}")
-        st.metric("Probability", f"{home_prob:.1%}")
-        st.metric("Odds", f"{best_odds['home']:.2f}")
-    
+        stats_home = get_team_stats(match["home_team"])
+        if stats_home:
+            st.metric("Победи", stats_home["wins"])
+            st.metric("Голове за", stats_home["goals_for"])
+            st.metric("Голове против", stats_home["goals_against"])
+        else:
+            st.write("Няма статистика за домакините.")
     with col2:
-        st.subheader("⚖ Draw")
-        st.metric("Probability", f"{draw_prob:.1%}")
-        st.metric("Odds", f"{best_odds['draw']:.2f}")
-    
-    with col3:
-        st.subheader(f"✈ {away_team}")
-        st.metric("Avg Goals", f"{away_stats['avg_goals']:.1f}")
-        st.metric("Win Rate", f"{away_stats['win_rate']:.0%}")
-        st.metric("Probability", f"{away_prob:.1%}")
-        st.metric("Odds", f"{best_odds['away']:.2f}")
-    
-    # Match history
-    st.subheader("Recent Matches")
-    
-    col4, col5 = st.columns(2)
-    with col4:
-        st.caption(f"Last {len(home_matches[-5:])} home matches - {home_team}")
-        for m in reversed(home_matches[-5:]):
-            if m["homeTeam"]["name"] == home_team:
-                score = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
-                st.write(f"{format_date(m['utcDate'])} | {score}")
-    
-    with col5:
-        st.caption(f"Last {len(away_matches[-5:])} away matches - {away_team}")
-        for m in reversed(away_matches[-5:]):
-            if m["awayTeam"]["name"] == away_team:
-                score = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
-                st.write(f"{format_date(m['utcDate'])} | {score}")
+        stats_away = get_team_stats(match["away_team"])
+        if stats_away:
+            st.metric("Победи", stats_away["wins"])
+            st.metric("Голове за", stats_away["goals_for"])
+            st.metric("Голове против", stats_away["goals_against"])
+        else:
+            st.write("Няма статистика за гостите.")
 
-if __name__ == "__main__":
-    main()
+    st.markdown("### Коефициенти и стойност:")
+    for bookmaker in match["bookmakers"]:
+        name = bookmaker["title"]
+        for market in bookmaker["markets"]:
+            st.markdown(f"**{name} - {market['key']}**")
+            for outcome in market["outcomes"]:
+                label = outcome["name"]
+                odds = outcome["price"]
+                est_prob = 0.35  # Тук може да добавим ML/статистика по-късно
+                value = calculate_value(odds, est_prob)
+                st.write(f"{label}: {odds} | Стойност: {value}")
