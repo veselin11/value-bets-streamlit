@@ -1,13 +1,11 @@
 import streamlit as st
 import requests
-import pandas as pd
 import numpy as np
 from scipy.stats import poisson
 import joblib
 from datetime import datetime
-import traceback
 
-# ================== CONFIGURATION ================== #
+# --- Конфигурация и ключове ---
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
 SPORT = "soccer_epl"
@@ -35,7 +33,7 @@ TEAM_ID_MAPPING = {
     "AFC Bournemouth": 1044
 }
 
-# ================== API FUNCTIONS ================== #
+# --- Зареждане на live odds ---
 @st.cache_data(ttl=3600)
 def get_live_odds():
     try:
@@ -51,14 +49,15 @@ def get_live_odds():
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        st.error(f"Odds API Error: {e}")
+        st.error(f"Грешка при зареждане на odds: {e}")
         return []
 
+# --- Зареждане на статистики за отбор ---
 @st.cache_data(ttl=3600)
 def get_team_stats(team_name):
     team_id = TEAM_ID_MAPPING.get(team_name)
     if not team_id:
-        st.warning(f"Unknown team: {team_name}")
+        st.warning(f"Неизвестен отбор: {team_name}")
         return []
     try:
         response = requests.get(
@@ -73,70 +72,31 @@ def get_team_stats(team_name):
             matches = []
         return matches
     except Exception as e:
-        st.error(f"Stats Error for {team_name}: {e}")
+        st.error(f"Грешка при зареждане на статистики за {team_name}: {e}")
         return []
 
-# ================== ANALYTICS FUNCTIONS ================== #
+# --- Изчисляване на вероятности с поасоново разпределение ---
 def calculate_poisson_probabilities(home_avg, away_avg):
     max_goals = 10
     home_win, draw, away_win = 0, 0, 0
-    
+
     for i in range(max_goals):
         for j in range(max_goals):
             p = poisson.pmf(i, home_avg) * poisson.pmf(j, away_avg)
-            if i > j: home_win += p
-            elif i == j: draw += p
-            else: away_win += p
-    
+            if i > j:
+                home_win += p
+            elif i == j:
+                draw += p
+            else:
+                away_win += p
+
     total = home_win + draw + away_win
     return home_win/total, draw/total, away_win/total
 
-def calculate_value_bets(probabilities, odds):
-    try:
-        return {
-            'home': probabilities[0] - 1/odds['home'],
-            'draw': probabilities[1] - 1/odds['draw'],
-            'away': probabilities[2] - 1/odds['away']
-        }
-    except Exception:
-        return {'home': 0, 'draw': 0, 'away': 0}
-
-# ================== ML FUNCTIONS ================== #
-def load_ml_artifacts():
-    try:
-        model = joblib.load("model.pkl")
-        scaler = joblib.load("scaler.pkl")
-        return model, scaler
-    except Exception as e:
-        st.error(f"ML artifacts loading error: {e}")
-        return None, None
-
-def predict_with_ai(home_stats, away_stats):
-    model, scaler = load_ml_artifacts()
-    if not model or not scaler:
-        return None
-    features = np.array([
-        home_stats.get("avg_goals", 0),
-        away_stats.get("avg_goals", 0),
-        home_stats.get("win_rate", 0),
-        away_stats.get("win_rate", 0)
-    ]).reshape(1, -1)
-    try:
-        scaled = scaler.transform(features)
-        return model.predict_proba(scaled)[0]
-    except Exception as e:
-        st.error(f"Prediction error: {e}")
-        return None
-
-# ================== UI HELPERS ================== #
-def format_date(iso_date):
-    try:
-        return datetime.fromisoformat(iso_date.replace("Z", "+00:00")).strftime("%d %b %Y")
-    except Exception:
-        return iso_date
-
+# --- Извличане на основни статистики от мачовете ---
 def get_team_stats_data(matches, is_home=True):
     if not matches:
+        # Фалбек стойности, ако няма данни
         return {"avg_goals": 1.2 if is_home else 0.9, "win_rate": 0.5 if is_home else 0.3}
 
     goals = []
@@ -162,94 +122,83 @@ def get_team_stats_data(matches, is_home=True):
     win_rate = wins/count if count > 0 else (0.5 if is_home else 0.3)
     return {"avg_goals": avg_goals, "win_rate": win_rate}
 
-# ================== MAIN ================== #
+# --- Зареждане на ML модел и скейлър ---
+def load_ml_artifacts():
+    try:
+        model = joblib.load("model.pkl")
+        scaler = joblib.load("scaler.pkl")
+        return model, scaler
+    except Exception as e:
+        st.error(f"Грешка при зареждане на ML артефакти: {e}")
+        return None, None
+
+# --- Основна функция ---
 def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
     st.title("⚽ Smart Betting Analyzer")
 
+    matches = get_live_odds()
+    if not matches:
+        st.warning("Няма налични мачове")
+        return
+
+    selected_match = st.selectbox(
+        "Избери мач:",
+        [f'{m["home_team"]} vs {m["away_team"]}' for m in matches]
+    )
+    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
+
+    home_matches_raw = get_team_stats(match["home_team"])
+    away_matches_raw = get_team_stats(match["away_team"])
+
+    home_stats = get_team_stats_data(home_matches_raw, is_home=True)
+    away_stats = get_team_stats_data(away_matches_raw, is_home=False)
+
+    # Определяне на най-добрите коефициенти
+    best_odds = {"home": 1.5, "draw": 4.0, "away": 6.0}
     try:
-        with st.spinner("Loading live odds..."):
-            matches = get_live_odds()
-        if not matches:
-            st.warning("No matches available")
-            return
+        if "bookmakers" in match and match["bookmakers"]:
+            best_odds = {
+                "home": max(
+                    o["price"]
+                    for b in match["bookmakers"]
+                    for o in b["markets"][0]["outcomes"]
+                    if o["name"] == match["home_team"]
+                ),
+                "draw": max(
+                    o["price"]
+                    for b in match["bookmakers"]
+                    for o in b["markets"][0]["outcomes"]
+                    if o["name"] == "Draw"
+                ),
+                "away": max(
+                    o["price"]
+                    for b in match["bookmakers"]
+                    for o in b["markets"][0]["outcomes"]
+                    if o["name"] == match["away_team"]
+                ),
+            }
+    except Exception:
+        pass  # Ако има проблеми с odds, ползва фалбек стойности
 
-        selected_match = st.selectbox(
-            "Select Match:",
-            [f'{m["home_team"]} vs {m["away_team"]}' for m in matches],
-            index=0
-        )
-        match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
+    # Изчисляване на вероятности
+    prob_home, prob_draw, prob_away = calculate_poisson_probabilities(
+        home_stats["avg_goals"],
+        away_stats["avg_goals"]
+    )
 
-        with st.spinner("Analyzing teams..."):
-            home_matches_raw = get_team_stats(match["home_team"])
-            away_matches_raw = get_team_stats(match["away_team"])
+    # Показване на резултатите
+    st.subheader("Резултати от анализ")
+    col1, col2, col3 = st.columns(3)
 
-            home_stats = get_team_stats_data(home_matches_raw, is_home=True)
-            away_stats = get_team_stats_data(away_matches_raw, is_home=False)
+    col1.metric("Вероятност за победа на домакина", f"{prob_home*100:.1f}%")
+    col2.metric("Вероятност за равенство", f"{prob_draw*100:.1f}%")
+    col3.metric("Вероятност за победа на госта", f"{prob_away*100:.1f}%")
 
-        # Odds processing
-        best_odds = {"home": 1.5, "draw": 4.0, "away": 6.0}
-        try:
-            if "bookmakers" in match and match["bookmakers"]:
-                best_odds = {
-                    "home": max(
-                        o["price"]
-                        for b in match["bookmakers"]
-                        for o in b["markets"][0]["outcomes"]
-                        if o["name"] == match["home_team"]
-                    ),
-                    "draw": max(
-                        o["price"]
-                        for b in match["bookmakers"]
-                        for o in b["markets"][0]["outcomes"]
-                        if o["name"] == "Draw"
-                    ),
-                    "away": max(
-                        o["price"]
-                        for b in match["bookmakers"]
-                        for o in b["markets"][0]["outcomes"]
-                        if o["name"] == match["away_team"]
-                    ),
-                }
-        except Exception:
-            pass  # fallback odds kept
+    st.subheader("Най-добри коефициенти")
+    col1.metric("Коефициент за домакин", f"{best_odds['home']:.2f}")
+    col2.metric("Коефициент за равенство", f"{best_odds['draw']:.2f}")
+    col3.metric("Коефициент за гост", f"{best_odds['away']:.2f}")
 
-        prob_home, prob_draw, prob_away = calculate_poisson_probabilities(
-            home_stats["avg_goals"],
-            away_stats["avg_goals"]
-        )
-
-        value_bets = calculate_value_bets(
-            (prob_home, prob_draw, prob_away),
-            best_odds
-        )
-
-        tab1, tab2, tab3 = st.tabs(["Match Analysis", "Team History", "AI Predictions"])
-
-        with tab1:
-            cols = st.columns(3)
-            outcomes = [
-                ("🏠 Home Win", prob_home, value_bets["home"], best_odds["home"]),
-                ("⚖ Draw", prob_draw, value_bets["draw"], best_odds["draw"]),
-                ("✈ Away Win", prob_away, value_bets["away"], best_odds["away"])
-            ]
-
-            for col, (title, prob, value, odds) in zip(cols, outcomes):
-                with col:
-                    st.subheader(title)
-                    st.metric("Probability", f"{prob*100:.1f}%")
-                    st.metric("Best Odds", f"{odds:.2f}")
-                    value_color = "green" if value > 0 else "red"
-                    st.markdown(f"**Value:** <span style='color:{value_color}'>{(value*100):.1f}%</span>", unsafe_allow_html=True)
-
-        with tab2:
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.subheader(f"Last 10 Matches - {match['home_team']}")
-                home_matches = home_matches_raw[-10:] if home_matches_raw else []
-                if home_matches:
-                    for m in reversed(home_matches):
-                        score = m.get("score", {}).get("fullTime")
-                        if score and score.get("home
+if __name__ == "__main__":
+    main()
