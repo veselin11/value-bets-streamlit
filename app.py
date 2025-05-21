@@ -254,4 +254,47 @@ def main():
         chosen = st.radio("Изберете залог за запазване:", [o[0] for o in outcomes])
         if st.button("Запази прогноза"):
             save_history(match, prob, best_odds, values, chosen)
-            st.success("Прогнозата е
+            st.success("Прогнозата е запазена успешно!")
+
+    with tab2:
+        st.subheader(f"Последни 10 мача на {match['home_team']}")
+        if home_matches:
+            for m in reversed(home_matches):
+                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
+                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
+        else:
+            st.write("Няма намерени мачове.")
+
+        st.subheader(f"Последни 10 мача на {match['away_team']}")
+        if away_matches:
+            for m in reversed(away_matches):
+                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
+                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
+        else:
+            st.write("Няма намерени мачове.")
+
+    with tab3:
+        st.subheader("AI Прогноза")
+        if st.button("Генерирай AI прогноза"):
+            ai_prob = predict_with_ai(home_stats, away_stats)
+            if ai_prob is not None:
+                plot_probabilities(
+                    "AI Предсказани вероятности",
+                    [match["home_team"], "Равен", match["away_team"]],
+                    ai_prob
+                )
+            else:
+                st.warning("Моделът за AI прогнози не е наличен.")
+
+    with tab4:
+        st.subheader("История на залозите")
+        display_history()
+
+    with tab5:
+        st.subheader("История на избран отбор")
+        team_name = st.text_input("Въведете име на отбор за показване на история:")
+        if team_name:
+            display_team_history(team_name)
+
+if __name__ == "__main__":
+    main()
