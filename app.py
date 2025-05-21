@@ -3,8 +3,11 @@ import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from datetime import datetime
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+import joblib
 import os
+from datetime import datetime
 import matplotlib.pyplot as plt
 
 # ================ CONFIGURATION ================= #
@@ -29,17 +32,16 @@ TEAM_ID_MAPPING = {
     "Newcastle United": 67,
     "Nottingham Forest": 351,
     "Sheffield United": 356,
-    "Southampton": 41,
     "Tottenham Hotspur": 73,
     "West Ham United": 563,
     "Wolverhampton Wanderers": 76,
     "AFC Bournemouth": 1044,
-    # Други популярни европейски отбори
-    "Real Madrid": 86,
-    "Barcelona": 81,
-    "Bayern Munich": 5,
-    "Juventus": 109,
-    "Paris Saint-Germain": 524
+    # Допълнени от Championship
+    "Leicester City": 338,
+    "Leeds United": 341,
+    "Southampton": 340,
+    "Ipswich Town": 68,
+    "Middlesbrough": 343
 }
 
 HISTORY_FILE = "bet_history.csv"
@@ -98,17 +100,34 @@ def calculate_poisson_probabilities(home_avg, away_avg):
 
 def calculate_value_bets(probabilities, odds):
     return {
-        'home': probabilities[0] - 1/odds['home'] if odds['home'] > 0 else 0,
-        'draw': probabilities[1] - 1/odds['draw'] if odds['draw'] > 0 else 0,
-        'away': probabilities[2] - 1/odds['away'] if odds['away'] > 0 else 0
+        'home': probabilities[0] - 1/odds['home'],
+        'draw': probabilities[1] - 1/odds['draw'],
+        'away': probabilities[2] - 1/odds['away']
     }
+
+# ================ ML FUNCTIONS ===================== #
+def load_ml_artifacts():
+    try:
+        return joblib.load("model.pkl"), joblib.load("scaler.pkl")
+    except FileNotFoundError:
+        st.error("ML artifacts missing! Please train the model first.")
+        return None, None
+
+def predict_with_ai(home_stats, away_stats):
+    model, scaler = load_ml_artifacts()
+    if not model:
+        return None
+    features = np.array([
+        home_stats["avg_goals"],
+        away_stats["avg_goals"],
+        home_stats["win_rate"],
+        away_stats["win_rate"]
+    ]).reshape(1, -1)
+    return model.predict_proba(scaler.transform(features))[0]
 
 # ================ UI HELPERS ======================= #
 def format_date(iso_date):
-    try:
-        return datetime.fromisoformat(iso_date).strftime("%d %b %Y")
-    except Exception:
-        return iso_date
+    return datetime.fromisoformat(iso_date).strftime("%d %b %Y")
 
 def get_team_stats_data(matches, is_home=True):
     if not matches:
@@ -125,6 +144,14 @@ def get_team_stats_data(matches, is_home=True):
         goals.append(team_goals)
         wins += 1 if team_goals > opp_goals else 0
     return {"avg_goals": np.mean(goals) if goals else 0, "win_rate": wins/len(matches[-10:])}
+
+def plot_probabilities(title, labels, probabilities):
+    fig, ax = plt.subplots()
+    ax.bar(labels, probabilities, color=["#4CAF50", "#FFC107", "#2196F3"])
+    ax.set_ylim(0, 1)
+    ax.set_title(title)
+    ax.set_ylabel("Вероятност")
+    st.pyplot(fig)
 
 # ================ HISTORY MANAGEMENT =============== #
 def save_history(match, probabilities, odds, values, chosen):
@@ -157,20 +184,6 @@ def display_history():
         st.dataframe(df)
     else:
         st.info("Все още няма записана история.")
-
-def display_team_history(team_name):
-    matches = get_team_stats(team_name)
-    st.subheader(f"Последни 10 мача на {team_name}")
-    if not matches:
-        st.info("Няма намерени мачове.")
-        return
-    for match in matches:
-        date = format_date(match["utcDate"])
-        home = match["homeTeam"]["name"]
-        away = match["awayTeam"]["name"]
-        home_score = match["score"]["fullTime"]["home"]
-        away_score = match["score"]["fullTime"]["away"]
-        st.write(f"{date} | {home} {home_score} - {away_score} {away}")
 
 # ================ MAIN APP ========================= #
 def main():
@@ -211,26 +224,20 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["Анализ на мача", "История на отборите", "AI Прогнози", "История на залозите"])
 
     with tab1:
-        st.header(f"Анализ на {match['home_team']} vs {match['away_team']}")
+        cols = st.columns(3)
         outcomes = [
             (match["home_team"], prob[0], values["home"], best_odds["home"]),
-            ("Draw", prob[1], values["draw"], best_odds["draw"]),
-            (match["away_team"], prob[2], values["away"], best_odds["away"]),
+            ("Равен", prob[1], values["draw"], best_odds["draw"]),
+            (match["away_team"], prob[2], values["away"], best_odds["away"])
         ]
+        for col, (label, probability, value, odds) in zip(cols, outcomes):
+            col.metric(label, f"{probability*100:.1f}%", delta=f"Value: {value*100:.2f}%")
+            col.write(f"Коефициент: {odds:.2f}")
 
-        for outcome, prob_value, val, odd in outcomes:
-            st.write(f"**{outcome}:** Вероятност: {prob_value:.2%}, Стойност: {val:.4f}, Коефициент: {odd}")
+        plot_probabilities(
+            f"Вероятности за {match['home_team']} vs {match['away_team']}",
+            [match["home_team"], "Равен", match["away_team"]],
+            prob
+        )
 
-    with tab2:
-        display_team_history(match["home_team"])
-        st.write("---")
-        display_team_history(match["away_team"])
-
-    with tab3:
-        st.info("AI Прогнози - все още не са имплементирани.")
-
-    with tab4:
-        display_history()
-
-if __name__ == "__main__":
-    main()
+        chosen = st.radio("Изберете залог за запазване:", [o
