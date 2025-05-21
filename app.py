@@ -13,9 +13,10 @@ import matplotlib.pyplot as plt
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-SPORT = "soccer_epl"
+SPORTS = ["soccer_epl", "soccer_la_liga", "soccer_serie_a", "soccer_bundesliga", "soccer_ligue_one"]
 
 TEAM_ID_MAPPING = {
+    # Premier League
     "Arsenal": 57,
     "Aston Villa": 58,
     "Brentford": 402,
@@ -35,7 +36,25 @@ TEAM_ID_MAPPING = {
     "Tottenham Hotspur": 73,
     "West Ham United": 563,
     "Wolverhampton Wanderers": 76,
-    "AFC Bournemouth": 1044
+    "AFC Bournemouth": 1044,
+    # La Liga
+    "Real Madrid": 86,
+    "Barcelona": 81,
+    "Atletico Madrid": 78,
+    "Sevilla": 559,
+    "Valencia": 95,
+    # Serie A
+    "Juventus": 109,
+    "AC Milan": 98,
+    "Inter": 108,
+    "Napoli": 113,
+    # Bundesliga
+    "Bayern Munich": 5,
+    "Borussia Dortmund": 4,
+    "RB Leipzig": 721,
+    # Ligue 1
+    "Paris Saint-Germain": 524,
+    "Marseille": 516
 }
 
 HISTORY_FILE = "bet_history.csv"
@@ -43,21 +62,23 @@ HISTORY_FILE = "bet_history.csv"
 # ================ API FUNCTIONS ================= #
 @st.cache_data(ttl=3600)
 def get_live_odds():
-    try:
-        response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
-            params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "eu",
-                "markets": "h2h",
-                "oddsFormat": "decimal"
-            }
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Odds API Error: {str(e)}")
-        return []
+    matches = []
+    for sport in SPORTS:
+        try:
+            response = requests.get(
+                f"https://api.the-odds-api.com/v4/sports/{sport}/odds",
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "eu",
+                    "markets": "h2h",
+                    "oddsFormat": "decimal"
+                }
+            )
+            response.raise_for_status()
+            matches.extend(response.json())
+        except Exception as e:
+            st.error(f"Odds API Error ({sport}): {str(e)}")
+    return matches
 
 @st.cache_data(ttl=3600)
 def get_team_stats(team_name):
@@ -220,9 +241,9 @@ def main():
     with tab1:
         cols = st.columns(3)
         outcomes = [
-            ("🏠 Победа домакин", prob[0], values["home"], best_odds["home"]),
+            (f"🏠 {match['home_team']}", prob[0], values["home"], best_odds["home"]),
             ("⚖ Равен", prob[1], values["draw"], best_odds["draw"]),
-            ("🏃 Победа гост", prob[2], values["away"], best_odds["away"])
+            (f"🏃 {match['away_team']}", prob[2], values["away"], best_odds["away"])
         ]
         for col, (label, probability, value, odds) in zip(cols, outcomes):
             col.metric(label, f"{probability*100:.1f}%", delta=f"Value: {value*100:.2f}%")
