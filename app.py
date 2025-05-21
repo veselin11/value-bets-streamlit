@@ -3,14 +3,9 @@ import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-import joblib
-import os
-from datetime import datetime
-import matplotlib.pyplot as plt
-import hashlib
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import os
 
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
@@ -25,6 +20,30 @@ LANGUAGES = {
         "no_matches": "Няма налични мачове.",
         "settings": "Настройки",
         "min_odds": "Минимален коефициент",
+        "predictions": "Прогнози",
+        "history": "История",
+        "live": "На живо",
+        "bet_history": "История на залозите",
+        "refresh_history": "Обнови историята",
+        "no_history": "Все още няма записани залози.",
+        "live_updates": "Обновления на живо",
+        "refresh": "Обнови",
+        "kelly_title": "Кели Калкулатор",
+        "bankroll": "Бюджет",
+        "confidence": "Увереност (%)",
+        "max_stake": "Макс. залог (%)",
+        "avg_goals": "Средни голове",
+        "conceded": "Получени",
+        "last_5": "Последни 5 мача",
+        "home": "Домакин",
+        "away": "Гост",
+        "points": "точки",
+        "select_team": "Избери отбор (търсене)",
+        "place_bet": "Постави залог",
+        "stake": "Залог (в единици)",
+        "bet_success": "Залогът беше записан успешно!",
+        "invalid_stake": "Моля, въведете валидна стойност за залога.",
+        "kelly_recommendation": "Препоръчан залог по Кели:",
     },
     "English": {
         "select_league": "Select league:",
@@ -34,6 +53,30 @@ LANGUAGES = {
         "no_matches": "No matches available.",
         "settings": "Settings",
         "min_odds": "Minimum odds",
+        "predictions": "Predictions",
+        "history": "History",
+        "live": "Live",
+        "bet_history": "Bet History",
+        "refresh_history": "Refresh History",
+        "no_history": "No bets placed yet.",
+        "live_updates": "Live Updates",
+        "refresh": "Refresh",
+        "kelly_title": "Kelly Calculator",
+        "bankroll": "Bankroll",
+        "confidence": "Confidence (%)",
+        "max_stake": "Max Stake (%)",
+        "avg_goals": "Avg Goals",
+        "conceded": "Conceded",
+        "last_5": "Last 5 Matches",
+        "home": "Home",
+        "away": "Away",
+        "points": "points",
+        "select_team": "Select Team (search)",
+        "place_bet": "Place Bet",
+        "stake": "Stake (units)",
+        "bet_success": "Bet saved successfully!",
+        "invalid_stake": "Please enter a valid stake amount.",
+        "kelly_recommendation": "Kelly recommended stake:",
     }
 }
 
@@ -71,6 +114,20 @@ def calculate_kelly(prob, odds):
     if odds <= 1:
         return 0.0
     return (prob * (odds - 1) - (1 - prob)) / (odds - 1)
+
+def get_best_odds(match):
+    best_home, best_draw, best_away = 0, 0, 0
+    for bookmaker in match.get('bookmakers', []):
+        for market in bookmaker.get('markets', []):
+            if market['key'] == 'h2h':
+                for outcome in market['outcomes']:
+                    if outcome['name'] == match['home_team']:
+                        best_home = max(best_home, outcome['price'])
+                    elif outcome['name'] == 'Draw':
+                        best_draw = max(best_draw, outcome['price'])
+                    elif outcome['name'] == match['away_team']:
+                        best_away = max(best_away, outcome['price'])
+    return {'home': best_home, 'draw': best_draw, 'away': best_away}
 
 # ================ API FUNCTIONS ================= #
 @st.cache_data(ttl=3600)
@@ -123,7 +180,7 @@ def get_team_stats(team_name):
         st.error(f"Stats Error for {team_name}: {str(e)}")
         return {}
 
-# ================ ENHANCED ANALYTICS ============== #
+# ================ ANALYTICS ============== #
 def get_extended_stats(matches_data, team_name):
     if not matches_data:
         return {}
@@ -178,7 +235,7 @@ def render_match_comparison(home_stats, away_stats, texts):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric(f"{texts['avg_goals']} (Home)", 
+        st.metric(f"{texts['avg_goals']} ({texts['home']})", 
                  f"{home_stats['avg_scored']:.1f}",
                  f"{home_stats['avg_conceded']:.1f} {texts['conceded']}")
 
@@ -189,7 +246,7 @@ def render_match_comparison(home_stats, away_stats, texts):
         st.write(f"{texts['away']}: {away_stats['form']} {texts['points']}")
 
     with col3:
-        st.metric(f"{texts['avg_goals']} (Away)", 
+        st.metric(f"{texts['avg_goals']} ({texts['away']})", 
                  f"{away_stats['avg_scored']:.1f}",
                  f"{away_stats['avg_conceded']:.1f} {texts['conceded']}")
 
@@ -204,6 +261,22 @@ def render_kelly_calculator(texts):
             'confidence': confidence/100,
             'max_stake': max_stake/100
         }
+
+def save_bet(match_id, team, odds, stake):
+    filename = get_hashed_filename(HISTORY_FILE)
+    bet_data = {
+        "timestamp": pd.Timestamp.now(),
+        "match_id": match_id,
+        "team": team,
+        "odds": odds,
+        "stake": stake
+    }
+    if os.path.exists(filename):
+        df = pd.read_csv(filename)
+        df = df.append(bet_data, ignore_index=True)
+    else:
+        df = pd.DataFrame([bet_data])
+    df.to_csv(filename, index=False)
 
 # ================ MAIN APP ====================== #
 def main():
@@ -226,55 +299,9 @@ def main():
         st.warning(texts['no_matches'])
         return
     
-    selected_match = st.selectbox(
-        texts['select_match'],
-        [f"{m['home_team']} vs {m['away_team']}" for m in matches]
-    )
+    # По-добър избор на мачове (searchable selectbox)
+    match_strs = [f"{m['home_team']} vs {m['away_team']}" for m in matches]
+    selected_match = st.selectbox(texts['select_match'], match_strs)
     match = next(m for m in matches if f"{m['home_team']} vs {m['away_team']}" == selected_match)
     
-    with ThreadPoolExecutor() as executor:
-        home_data = executor.submit(get_team_stats, match['home_team']).result()
-        away_data = executor.submit(get_team_stats, match['away_team']).result()
-    
-    home_stats = get_extended_stats(home_data, match['home_team'])
-    away_stats = get_extended_stats(away_data, match['away_team'])
-    
-    render_match_comparison(home_stats, away_stats, texts)
-    
-    tab1, tab2, tab3 = st.tabs([texts['predictions'], texts['history'], texts['live']])
-    
-    with tab1:
-        prob = calculate_poisson_probabilities(home_stats['avg_scored'], away_stats['avg_scored'])
-        
-        col1, col2, col3 = st.columns(3)
-        outcomes = [
-            (match['home_team'], prob[0], best_odds['home']),
-            ("Draw", prob[1], best_odds['draw']),
-            (match['away_team'], prob[2], best_odds['away'])
-        ]
-        
-        for col, (label, probability, odds) in zip([col1, col2, col3], outcomes):
-            col.metric(label, f"{probability*100:.1f}%", 
-                      delta=f"{texts['value']}: {(probability - 1/odds)*100:.2f}%")
-            col.write(f"{texts['odds']}: {odds:.2f}")
-            kelly = calculate_kelly(probability, odds)
-            col.progress(min(int(kelly*100), 100), f"Kelly: {kelly*100:.1f}%")
-
-    with tab2:
-        st.subheader(texts['bet_history'])
-        if st.button(texts['refresh_history']):
-            st.experimental_rerun()
-        
-        try:
-            history_df = pd.read_csv(get_hashed_filename(HISTORY_FILE))
-            st.dataframe(history_df)
-        except FileNotFoundError:
-            st.info(texts['no_history'])
-
-    with tab3:
-        st.subheader(texts['live_updates'])
-        if st.button("🔄 " + texts['refresh']):
-            st.experimental_rerun()
-
-if __name__ == "__main__":
-    main()
+    with ThreadPool
