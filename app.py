@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+SPORT = "soccer_epl"
 
-# Отбори с ID за Football Data API
 TEAM_ID_MAPPING = {
     "Arsenal": 57,
     "Aston Villa": 58,
@@ -41,27 +41,11 @@ TEAM_ID_MAPPING = {
 HISTORY_FILE = "bet_history.csv"
 
 # ================ API FUNCTIONS ================= #
-
 @st.cache_data(ttl=3600)
-def get_leagues():
-    """Връща списък с първенства от Odds API"""
-    try:
-        res = requests.get(f"https://api.the-odds-api.com/v4/sports", params={"apiKey": ODDS_API_KEY})
-        res.raise_for_status()
-        sports = res.json()
-        # филтрираме само футболни първенства (soccer)
-        leagues = [s for s in sports if s["key"].startswith("soccer")]
-        return leagues
-    except Exception as e:
-        st.error(f"Error loading leagues: {e}")
-        return []
-
-@st.cache_data(ttl=3600)
-def get_live_odds(league_key):
-    """Връща мачове и коефициенти за избраното първенство"""
+def get_live_odds():
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{league_key}/odds",
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
             params={
                 "apiKey": ODDS_API_KEY,
                 "regions": "eu",
@@ -195,32 +179,24 @@ def display_history():
     else:
         st.info("Все още няма записана история.")
 
-# Функция за показване на последните 10 мача на даден отбор във формат "Отбор1 X:Y Отбор2"
 def display_team_history(team_name):
     matches = get_team_stats(team_name)
-    if not matches:
-        st.write(f"Няма намерени мачове за {team_name}.")
-        return
-    st.write(f"Последни 10 мача на {team_name}:")
-    for m in reversed(matches[-10:]):
-        date = format_date(m["utcDate"])
-        home = m["homeTeam"]["name"]
-        away = m["awayTeam"]["name"]
-        score_home = m["score"]["fullTime"]["home"]
-        score_away = m["score"]["fullTime"]["away"]
-        st.caption(f"{date} | {home} {score_home}:{score_away} {away}")
+    if matches:
+        for m in reversed(matches):
+            home = m["home_team"]["name"]
+            away = m["away_team"]["name"]
+            score = f"{m['score']['fullTime']['home']} : {m['score']['fullTime']['away']}"
+            st.caption(f"{format_date(m['utcDate'])} | {home} {score} {away}")
+    else:
+        st.write("Няма намерени мачове за отбора.")
 
 # ================ MAIN APP ========================= #
 def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
     st.title("⚽ Smart Betting Analyzer")
 
-    leagues = get_leagues()
-    league_map = {l["key"]: l["title"] for l in leagues}
-    league_key = st.selectbox("Изберете първенство:", options=list(league_map.keys()), format_func=lambda k: league_map[k])
-
     with st.spinner("Зареждане на live коефициенти..."):
-        matches = get_live_odds(league_key)
+        matches = get_live_odds()
 
     if not matches:
         st.warning("Няма налични мачове в момента.")
@@ -250,7 +226,13 @@ def main():
     prob = calculate_poisson_probabilities(home_stats["avg_goals"], away_stats["avg_goals"])
     values = calculate_value_bets(prob, best_odds)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Анализ на мача", "История на отбори", "AI Прогнози", "История на залозите"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Анализ на мача",
+        "История на отборите",
+        "AI Прогнози",
+        "История на залозите",
+        "История на избран отбор"
+    ])
 
     with tab1:
         cols = st.columns(3)
@@ -275,4 +257,23 @@ def main():
             st.success("Прогнозата е записана!")
 
     with tab2:
-        # Тук добавяме
+        st.subheader(f"Последни 10 мача на {match['home_team']}")
+        if home_matches:
+            for m in reversed(home_matches):
+                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
+                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
+        else:
+            st.write("Няма намерени мачове.")
+
+        st.subheader(f"Последни 10 мача на {match['away_team']}")
+        if away_matches:
+            for m in reversed(away_matches):
+                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
+                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
+        else:
+            st.write("Няма намерени мачове.")
+
+    with tab3:
+        st.subheader("AI Прогноза")
+        if st.button("Генерирай AI прогноза"):
+            with st
