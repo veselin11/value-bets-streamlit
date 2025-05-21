@@ -3,14 +3,18 @@ import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from datetime import datetime
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+import joblib
 import os
+from datetime import datetime
 import matplotlib.pyplot as plt
 
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
 
+# Отбори с ID за Football Data API
 TEAM_ID_MAPPING = {
     "Arsenal": 57,
     "Aston Villa": 58,
@@ -39,23 +43,25 @@ HISTORY_FILE = "bet_history.csv"
 # ================ API FUNCTIONS ================= #
 
 @st.cache_data(ttl=3600)
-def get_all_leagues():
+def get_leagues():
+    """Връща списък с първенства от Odds API"""
     try:
-        response = requests.get(
-            "https://api.the-odds-api.com/v4/sports",
-            params={"apiKey": ODDS_API_KEY}
-        )
-        response.raise_for_status()
-        return response.json()
+        res = requests.get(f"https://api.the-odds-api.com/v4/sports", params={"apiKey": ODDS_API_KEY})
+        res.raise_for_status()
+        sports = res.json()
+        # филтрираме само футболни първенства (soccer)
+        leagues = [s for s in sports if s["key"].startswith("soccer")]
+        return leagues
     except Exception as e:
-        st.error(f"Error loading leagues: {str(e)}")
+        st.error(f"Error loading leagues: {e}")
         return []
 
-@st.cache_data(ttl=300)
-def get_live_odds(sport_key):
+@st.cache_data(ttl=3600)
+def get_live_odds(league_key):
+    """Връща мачове и коефициенти за избраното първенство"""
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            f"https://api.the-odds-api.com/v4/sports/{league_key}/odds",
             params={
                 "apiKey": ODDS_API_KEY,
                 "regions": "eu",
@@ -108,6 +114,26 @@ def calculate_value_bets(probabilities, odds):
         'draw': probabilities[1] - 1/odds['draw'],
         'away': probabilities[2] - 1/odds['away']
     }
+
+# ================ ML FUNCTIONS ===================== #
+def load_ml_artifacts():
+    try:
+        return joblib.load("model.pkl"), joblib.load("scaler.pkl")
+    except FileNotFoundError:
+        st.error("ML artifacts missing! Please train the model first.")
+        return None, None
+
+def predict_with_ai(home_stats, away_stats):
+    model, scaler = load_ml_artifacts()
+    if not model:
+        return None
+    features = np.array([
+        home_stats["avg_goals"],
+        away_stats["avg_goals"],
+        home_stats["win_rate"],
+        away_stats["win_rate"]
+    ]).reshape(1, -1)
+    return model.predict_proba(scaler.transform(features))[0]
 
 # ================ UI HELPERS ======================= #
 def format_date(iso_date):
@@ -162,26 +188,39 @@ def save_history(match, probabilities, odds, values, chosen):
 def display_history():
     if os.path.exists(HISTORY_FILE):
         df = pd.read_csv(HISTORY_FILE)
+        filter_team = st.text_input("Филтрирай по отбор (частично име):")
+        if filter_team:
+            df = df[df['match'].str.contains(filter_team, case=False)]
         st.dataframe(df)
     else:
         st.info("Все още няма записана история.")
+
+# Функция за показване на последните 10 мача на даден отбор във формат "Отбор1 X:Y Отбор2"
+def display_team_history(team_name):
+    matches = get_team_stats(team_name)
+    if not matches:
+        st.write(f"Няма намерени мачове за {team_name}.")
+        return
+    st.write(f"Последни 10 мача на {team_name}:")
+    for m in reversed(matches[-10:]):
+        date = format_date(m["utcDate"])
+        home = m["homeTeam"]["name"]
+        away = m["awayTeam"]["name"]
+        score_home = m["score"]["fullTime"]["home"]
+        score_away = m["score"]["fullTime"]["away"]
+        st.caption(f"{date} | {home} {score_home}:{score_away} {away}")
 
 # ================ MAIN APP ========================= #
 def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
     st.title("⚽ Smart Betting Analyzer")
 
-    # Зареждаме всички лиги от API и филтрираме само футболни
-    leagues = get_all_leagues()
-    league_options = {l["key"]: f"{l.get('group', '')} - {l['title']}".strip(" -") for l in leagues if "soccer" in l["key"]}
-    if not league_options:
-        st.error("Неуспешно зареждане на първенства.")
-        return
+    leagues = get_leagues()
+    league_map = {l["key"]: l["title"] for l in leagues}
+    league_key = st.selectbox("Изберете първенство:", options=list(league_map.keys()), format_func=lambda k: league_map[k])
 
-    selected_league = st.selectbox("Изберете първенство:", options=list(league_options.keys()), format_func=lambda x: league_options[x])
-
-    with st.spinner(f"Зареждане на live коефициенти за {league_options[selected_league]}..."):
-        matches = get_live_odds(selected_league)
+    with st.spinner("Зареждане на live коефициенти..."):
+        matches = get_live_odds(league_key)
 
     if not matches:
         st.warning("Няма налични мачове в момента.")
@@ -211,29 +250,29 @@ def main():
     prob = calculate_poisson_probabilities(home_stats["avg_goals"], away_stats["avg_goals"])
     values = calculate_value_bets(prob, best_odds)
 
-    tab1, tab2 = st.tabs(["Анализ на мача", "История на залозите"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Анализ на мача", "История на отбори", "AI Прогнози", "История на залозите"])
 
     with tab1:
         cols = st.columns(3)
         outcomes = [
-            (match['home_team'], prob[0], values["home"], best_odds["home"]),
+            (match["home_team"], prob[0], values["home"], best_odds["home"]),
             ("Равен", prob[1], values["draw"], best_odds["draw"]),
-            (match['away_team'], prob[2], values["away"], best_odds["away"])
+            (match["away_team"], prob[2], values["away"], best_odds["away"])
         ]
-        for col, (label, prob_val, val, odd) in zip(cols, outcomes):
-            col.markdown(f"### {label}")
-            col.markdown(f"Вероятност: {prob_val:.2%}")
-            col.markdown(f"Стойност: {val:.3f}")
-            col.markdown(f"Коефициент: {odd}")
+        for col, (label, probability, value, odds) in zip(cols, outcomes):
+            col.metric(label, f"{probability*100:.1f}%", delta=f"Value: {value*100:.2f}%")
+            col.write(f"Коефициент: {odds:.2f}")
+
+        plot_probabilities(
+            f"Вероятности за {match['home_team']} vs {match['away_team']}",
+            [match["home_team"], "Равен", match["away_team"]],
+            prob
+        )
 
         chosen = st.radio("Изберете залог за запазване:", [o[0] for o in outcomes])
-
-        if st.button("Запази залог"):
+        if st.button("Запази прогноза"):
             save_history(match, prob, best_odds, values, chosen)
-            st.success(f"Залог '{chosen}' запазен успешно!")
+            st.success("Прогнозата е записана!")
 
     with tab2:
-        display_history()
-
-if __name__ == "__main__":
-    main()
+        # Тук добавяме
