@@ -299,9 +299,85 @@ def main():
         st.warning(texts['no_matches'])
         return
     
-    # По-добър избор на мачове (searchable selectbox)
+    # ... предходен код ...
+
     match_strs = [f"{m['home_team']} vs {m['away_team']}" for m in matches]
     selected_match = st.selectbox(texts['select_match'], match_strs)
     match = next(m for m in matches if f"{m['home_team']} vs {m['away_team']}" == selected_match)
-    
-    with ThreadPool
+
+    # Взимаме статистики за двата отбора (паралелно)
+    with ThreadPoolExecutor() as executor:
+        future_home = executor.submit(get_team_stats, match['home_team'])
+        future_away = executor.submit(get_team_stats, match['away_team'])
+        home_stats = future_home.result()
+        away_stats = future_away.result()
+
+    # Изчисляване на разширена статистика
+    home_extended = get_extended_stats(home_stats, match['home_team'])
+    away_extended = get_extended_stats(away_stats, match['away_team'])
+
+    # Poisson прогноза
+    home_prob, draw_prob, away_prob = calculate_poisson_probabilities(
+        home_extended.get('avg_scored', 0),
+        away_extended.get('avg_scored', 0)
+    )
+
+    # Най-добри коефициенти от API
+    best_odds = get_best_odds(match)
+
+    # Показваме сравнение на отборите
+    st.subheader(f"{match['home_team']} vs {match['away_team']}")
+    render_match_comparison(home_extended, away_extended, texts)
+
+    # Показване на вероятности и коефициенти
+    st.write(f"### {texts['predictions']}")
+    st.write(f"**{match['home_team']} Win:** {home_prob:.2%} | {texts['odds']}: {best_odds['home']}")
+    st.write(f"**Draw:** {draw_prob:.2%} | {texts['odds']}: {best_odds['draw']}")
+    st.write(f"**{match['away_team']} Win:** {away_prob:.2%} | {texts['odds']}: {best_odds['away']}")
+
+    # Калкулация стойност (value bet)
+    value_home = best_odds['home'] * home_prob - 1
+    value_draw = best_odds['draw'] * draw_prob - 1
+    value_away = best_odds['away'] * away_prob - 1
+
+    st.write(f"### {texts['value']} (Value Bet)")
+    st.write(f"{match['home_team']}: {value_home:.3f}")
+    st.write(f"Draw: {value_draw:.3f}")
+    st.write(f"{match['away_team']}: {value_away:.3f}")
+
+    # Залог по Кели за най-добрата стойност
+    bet_options = {
+        match['home_team']: (home_prob, best_odds['home'], value_home),
+        "Draw": (draw_prob, best_odds['draw'], value_draw),
+        match['away_team']: (away_prob, best_odds['away'], value_away),
+    }
+    best_bet = max(bet_options.items(), key=lambda x: x[1][2])  # избор по стойност
+    prob, odds, val = best_bet[1]
+
+    kelly_fraction = calculate_kelly(prob * kelly_settings['confidence'], odds)
+    kelly_fraction = min(kelly_fraction, kelly_settings['max_stake'])
+    recommended_stake = kelly_fraction * kelly_settings['bankroll']
+
+    st.write(f"### {texts['kelly_recommendation']} {best_bet[0]}")
+    st.write(f"{recommended_stake:.2f} единици (Kelly Fraction: {kelly_fraction:.3f})")
+
+    # Възможност за поставяне на залог и записване в историята
+    stake = st.number_input(texts['stake'], min_value=0.0, step=1.0, value=0.0)
+    if st.button(texts['place_bet']):
+        if stake > 0:
+            save_bet(match['id'], best_bet[0], odds, stake)
+            st.success(texts['bet_success'])
+        else:
+            st.error(texts['invalid_stake'])
+
+    # История на залозите
+    st.sidebar.subheader(texts['bet_history'])
+    filename = get_hashed_filename(HISTORY_FILE)
+    if os.path.exists(filename):
+        history_df = pd.read_csv(filename)
+        st.sidebar.dataframe(history_df)
+    else:
+        st.sidebar.info(texts['no_history'])
+
+if __name__ == "__main__":
+    main()
