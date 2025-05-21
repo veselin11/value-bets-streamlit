@@ -36,12 +36,9 @@ TEAM_ID_MAPPING = {
     "West Ham United": 563,
     "Wolverhampton Wanderers": 76,
     "AFC Bournemouth": 1044,
-    # Допълнени от Championship
-    "Leicester City": 338,
-    "Leeds United": 341,
+    # Добави още първенства и отбори тук при нужда
     "Southampton": 340,
-    "Ipswich Town": 68,
-    "Middlesbrough": 343
+    "Leicester City": 338
 }
 
 HISTORY_FILE = "bet_history.csv"
@@ -240,4 +237,44 @@ def main():
             prob
         )
 
-        chosen = st.radio("Изберете залог за запазване:", [o
+        chosen = st.radio(
+            "Изберете залог за запазване:",
+            [match["home_team"], "Равен", match["away_team"]]
+        )
+
+        if st.button("Запази залог"):
+            save_history(match, prob, best_odds, values, chosen)
+            st.success("Залогът е запазен!")
+
+    with tab2:
+        team_hist = st.selectbox("Изберете отбор за история:", list(TEAM_ID_MAPPING.keys()))
+        team_matches = get_team_stats(team_hist)
+        if not team_matches:
+            st.info(f"Няма намерени мачове за {team_hist}.")
+        else:
+            st.write(f"Последни 10 мача на {team_hist}:")
+            for m in team_matches:
+                date = format_date(m["utcDate"])
+                score = m["score"]["fullTime"]
+                home = m["homeTeam"]["name"]
+                away = m["awayTeam"]["name"]
+                result = f"{score['home']} - {score['away']}"
+                st.write(f"{date} | {home} vs {away} | {result}")
+
+    with tab3:
+        st.subheader("AI Прогноза")
+        if st.button("Генерирай AI прогноза"):
+            with st.spinner("Анализ..."):
+                ai_prob = predict_with_ai(home_stats, away_stats)
+            if ai_prob is not None:
+                labels = [match["home_team"], "Равен", match["away_team"]]
+                plot_probabilities("AI Модел - Вероятности", labels, ai_prob)
+            else:
+                st.warning("AI моделът не е наличен.")
+
+    with tab4:
+        st.subheader("История на записаните залози")
+        display_history()
+
+if __name__ == "__main__":
+    main()
