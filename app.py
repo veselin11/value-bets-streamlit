@@ -13,10 +13,8 @@ import matplotlib.pyplot as plt
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-SPORTS = ["soccer_epl", "soccer_la_liga", "soccer_serie_a", "soccer_bundesliga", "soccer_ligue_one"]
 
 TEAM_ID_MAPPING = {
-    # Premier League
     "Arsenal": 57,
     "Aston Villa": 58,
     "Brentford": 402,
@@ -36,49 +34,38 @@ TEAM_ID_MAPPING = {
     "Tottenham Hotspur": 73,
     "West Ham United": 563,
     "Wolverhampton Wanderers": 76,
-    "AFC Bournemouth": 1044,
-    # La Liga
-    "Real Madrid": 86,
-    "Barcelona": 81,
-    "Atletico Madrid": 78,
-    "Sevilla": 559,
-    "Valencia": 95,
-    # Serie A
-    "Juventus": 109,
-    "AC Milan": 98,
-    "Inter": 108,
-    "Napoli": 113,
-    # Bundesliga
-    "Bayern Munich": 5,
-    "Borussia Dortmund": 4,
-    "RB Leipzig": 721,
-    # Ligue 1
-    "Paris Saint-Germain": 524,
-    "Marseille": 516
+    "AFC Bournemouth": 1044
+}
+
+# Нов речник с първенства (примерни id, според Odds API)
+LEAGUES = {
+    "English Premier League": "soccer_epl",
+    "La Liga": "soccer_spain_la_liga",
+    "Serie A": "soccer_italy_serie_a",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "Ligue 1": "soccer_france_ligue_one"
 }
 
 HISTORY_FILE = "bet_history.csv"
 
 # ================ API FUNCTIONS ================= #
 @st.cache_data(ttl=3600)
-def get_live_odds():
-    matches = []
-    for sport in SPORTS:
-        try:
-            response = requests.get(
-                f"https://api.the-odds-api.com/v4/sports/{sport}/odds",
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "eu",
-                    "markets": "h2h",
-                    "oddsFormat": "decimal"
-                }
-            )
-            response.raise_for_status()
-            matches.extend(response.json())
-        except Exception as e:
-            st.error(f"Odds API Error ({sport}): {str(e)}")
-    return matches
+def get_live_odds(sport):
+    try:
+        response = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport}/odds",
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h",
+                "oddsFormat": "decimal"
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Odds API Error: {str(e)}")
+        return []
 
 @st.cache_data(ttl=3600)
 def get_team_stats(team_name):
@@ -205,11 +192,22 @@ def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
     st.title("⚽ Smart Betting Analyzer")
 
+    selected_league = st.selectbox("Изберете първенство:", list(LEAGUES.keys()))
+    sport = LEAGUES[selected_league]
+
     with st.spinner("Зареждане на live коефициенти..."):
-        matches = get_live_odds()
+        matches = get_live_odds(sport)
 
     if not matches:
         st.warning("Няма налични мачове в момента.")
+        return
+
+    # Показваме мачове само от избраното първенство (ако API връща league info)
+    # Ако няма, махни този филтър
+    matches = [m for m in matches if m.get("sport_key") == sport]
+
+    if not matches:
+        st.warning("Няма налични мачове за избраното първенство.")
         return
 
     match_options = [f"{m['home_team']} vs {m['away_team']}" for m in matches]
@@ -241,9 +239,9 @@ def main():
     with tab1:
         cols = st.columns(3)
         outcomes = [
-            (f"🏠 {match['home_team']}", prob[0], values["home"], best_odds["home"]),
-            ("⚖ Равен", prob[1], values["draw"], best_odds["draw"]),
-            (f"🏃 {match['away_team']}", prob[2], values["away"], best_odds["away"])
+            (match['home_team'], prob[0], values["home"], best_odds["home"]),
+            ("Равен", prob[1], values["draw"], best_odds["draw"]),
+            (match['away_team'], prob[2], values["away"], best_odds["away"])
         ]
         for col, (label, probability, value, odds) in zip(cols, outcomes):
             col.metric(label, f"{probability*100:.1f}%", delta=f"Value: {value*100:.2f}%")
@@ -251,7 +249,7 @@ def main():
 
         plot_probabilities(
             f"Вероятности за {match['home_team']} vs {match['away_team']}",
-            ["Домакин", "Равен", "Гост"],
+            [match['home_team'], "Равен", match['away_team']],
             prob
         )
 
@@ -283,7 +281,7 @@ def main():
             with st.spinner("Анализ..."):
                 ai_prob = predict_with_ai(home_stats, away_stats)
             if ai_prob is not None:
-                labels = ["Домакин", "Равен", "Гост"]
+                labels = [match['home_team'], "Равен", match['away_team']]
                 plot_probabilities("AI Модел - Вероятности", labels, ai_prob)
             else:
                 st.warning("AI моделът не е наличен.")
