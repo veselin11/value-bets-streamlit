@@ -1,8 +1,7 @@
 streamlit
-requests
 numpy
 pandas
 scikit-learn
-scipy
+matplotlib
+requests
 joblib
-pip install matplotlib
