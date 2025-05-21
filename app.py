@@ -1,186 +1,222 @@
-import streamlit as st import requests import pandas as pd import numpy as np from scipy.stats import poisson from sklearn.linear_model import LogisticRegression from sklearn.preprocessing import StandardScaler import joblib import os from datetime import datetime
+import streamlit as st
+import requests
+import pandas as pd
+import numpy as np
+from scipy.stats import poisson
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+import joblib
+import os
+from datetime import datetime
+import matplotlib.pyplot as plt
 
-================== CONFIGURATION ==================
+# ================== CONFIGURATION ================== #
+FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
+ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+SPORT = "soccer_epl"
 
-FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"] ODDS_API_KEY = st.secrets["ODDS_API_KEY"] SPORT = "soccer_epl"
-
-TEAM_ID_MAPPING = { "Arsenal": 57, "Aston Villa": 58, "Brentford": 402, "Brighton & Hove Albion": 397, "Burnley": 328, "Chelsea": 61, "Crystal Palace": 354, "Everton": 62, "Fulham": 63, "Liverpool": 64, "Luton Town": 389, "Manchester City": 65, "Manchester United": 66, "Newcastle United": 67, "Nottingham Forest": 351, "Sheffield United": 356, "Tottenham Hotspur": 73, "West Ham United": 563, "Wolverhampton Wanderers": 76, "AFC Bournemouth": 1044 }
-
-================== API FUNCTIONS ==================
-
-@st.cache_data(ttl=3600) def get_leagues(): try: response = requests.get( f"https://api.the-odds-api.com/v4/sports", params={"apiKey": ODDS_API_KEY} ) response.raise_for_status() return [s for s in response.json() if s["group"] == "Soccer"] except Exception as e: st.error(f"Leagues API Error: {str(e)}") return []
-
-@st.cache_data(ttl=3600) def get_live_odds(sport=SPORT): try: response = requests.get( f"https://api.the-odds-api.com/v4/sports/{sport}/odds", params={ "apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal" } ) response.raise_for_status() return response.json() except Exception as e: st.error(f"Odds API Error: {str(e)}") return []
-
-@st.cache_data(ttl=3600) def get_team_stats(team_name): team_id = TEAM_ID_MAPPING.get(team_name) if not team_id: return None try: response = requests.get( f"https://api.football-data.org/v4/teams/{team_id}/matches", headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY}, params={"status": "FINISHED", "limit": 10} ) response.raise_for_status() return response.json().get("matches", []) except Exception as e: st.error(f"Stats Error for {team_name}: {str(e)}") return []
-
-================== ANALYTICS FUNCTIONS ==================
-
-def calculate_poisson_probabilities(home_avg, away_avg): max_goals = 10 home_win, draw, away_win = 0, 0, 0
-
-for i in range(max_goals):
-    for j in range(max_goals):
-        p = poisson.pmf(i, home_avg) * poisson.pmf(j, away_avg)
-        if i > j: home_win += p
-        elif i == j: draw += p
-        else: away_win += p
-
-total = home_win + draw + away_win
-return home_win/total, draw/total, away_win/total
-
-def calculate_value_bets(probabilities, odds): return { 'home': probabilities[0] - 1/odds['home'], 'draw': probabilities[1] - 1/odds['draw'], 'away': probabilities[2] - 1/odds['away'] }
-
-================== ML FUNCTIONS ==================
-
-def load_ml_artifacts(): try: return ( joblib.load("model.pkl"), joblib.load("scaler.pkl") ) except FileNotFoundError: st.error("ML artifacts missing! Please train model first") return None, None
-
-def predict_with_ai(home_stats, away_stats): model, scaler = load_ml_artifacts() if not model: return None
-
-features = np.array([
-    home_stats["avg_goals"],
-    away_stats["avg_goals"],
-    home_stats["win_rate"],
-    away_stats["win_rate"]
-]).reshape(1, -1)
-
-return model.predict_proba(scaler.transform(features))[0]
-
-================== UI HELPER FUNCTIONS ==================
-
-def format_date(iso_date): return datetime.fromisoformat(iso_date).strftime("%d %b %Y")
-
-def get_team_stats_data(matches, is_home=True): if not matches: return { "avg_goals": 1.2 if is_home else 0.9, "win_rate": 0.5 if is_home else 0.3 }
-
-goals = []
-wins = 0
-
-for match in matches[-10:]:
-    if is_home:
-        team_goals = match["score"]["fullTime"]["home"]
-        is_winner = team_goals > match["score"]["fullTime"]["away"]
-    else:
-        team_goals = match["score"]["fullTime"]["away"]
-        is_winner = team_goals > match["score"]["fullTime"]["home"]
-
-    goals.append(team_goals)
-    wins += 1 if is_winner else 0
-
-return {
-    "avg_goals": np.mean(goals) if goals else 0,
-    "win_rate": wins/len(matches[-10:]) if matches else 0
+TEAM_ID_MAPPING = {
+    "Arsenal": 57, "Aston Villa": 58, "Brentford": 402, "Brighton & Hove Albion": 397,
+    "Burnley": 328, "Chelsea": 61, "Crystal Palace": 354, "Everton": 62, "Fulham": 63,
+    "Liverpool": 64, "Luton Town": 389, "Manchester City": 65, "Manchester United": 66,
+    "Newcastle United": 67, "Nottingham Forest": 351, "Sheffield United": 356,
+    "Tottenham Hotspur": 73, "West Ham United": 563, "Wolverhampton Wanderers": 76,
+    "AFC Bournemouth": 1044
 }
 
-================== MAIN INTERFACE ==================
+# ================== API FUNCTIONS ================== #
+@st.cache_data(ttl=3600)
+def get_live_odds():
+    try:
+        response = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"}
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Odds API Error: {str(e)}")
+        return []
 
-def main(): st.set_page_config(page_title="Smart Bet Advisor", layout="wide") st.title("⚽ Smart Betting Analyzer")
+@st.cache_data(ttl=3600)
+def get_team_stats(team_name):
+    team_id = TEAM_ID_MAPPING.get(team_name)
+    if not team_id:
+        return None
+    try:
+        response = requests.get(
+            f"https://api.football-data.org/v4/teams/{team_id}/matches",
+            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
+            params={"status": "FINISHED", "limit": 10}
+        )
+        response.raise_for_status()
+        return response.json().get("matches", [])
+    except Exception as e:
+        st.error(f"Stats Error for {team_name}: {str(e)}")
+        return []
 
-leagues = get_leagues()
-league_names = sorted(set(l["title"] for l in leagues if l.get("key")))
-selected_league = st.selectbox("Choose League:", league_names)
+# ================== ANALYTICS FUNCTIONS ================== #
+def calculate_poisson_probabilities(home_avg, away_avg):
+    max_goals = 10
+    matrix = np.outer(
+        poisson.pmf(np.arange(max_goals), home_avg),
+        poisson.pmf(np.arange(max_goals), away_avg)
+    )
+    home_win = np.tril(matrix, -1).sum()
+    draw = np.trace(matrix)
+    away_win = np.triu(matrix, 1).sum()
+    total = home_win + draw + away_win
+    return home_win/total, draw/total, away_win/total
 
-league_key = next((l["key"] for l in leagues if l["title"] == selected_league), SPORT)
-
-with st.spinner("Loading live odds..."):
-    matches = get_live_odds(league_key)
-
-if not matches:
-    st.warning("No matches available")
-    return
-
-selected_match = st.selectbox(
-    "Select Match:",
-    [f'{m["home_team"]} vs {m["away_team"]}' for m in matches],
-    index=0
-)
-match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
-
-with st.spinner("Analyzing teams..."):
-    home_stats = get_team_stats_data(get_team_stats(match["home_team"]), is_home=True)
-    away_stats = get_team_stats_data(get_team_stats(match["away_team"]), is_home=False)
-
-try:
-    best_odds = {
-        "home": max(o["price"] for b in match["bookmakers"] 
-                   for o in b["markets"][0]["outcomes"] 
-                   if o["name"] == match["home_team"]),
-        "draw": max(o["price"] for b in match["bookmakers"] 
-                   for o in b["markets"][0]["outcomes"] 
-                   if o["name"] == "Draw"),
-        "away": max(o["price"] for b in match["bookmakers"] 
-                   for o in b["markets"][0]["outcomes"] 
-                   if o["name"] == match["away_team"])
+def calculate_value_bets(probabilities, odds):
+    return {
+        'home': probabilities[0] - 1/odds['home'],
+        'draw': probabilities[1] - 1/odds['draw'],
+        'away': probabilities[2] - 1/odds['away']
     }
-except:
-    best_odds = {"home": 1.5, "draw": 4.0, "away": 6.0}
 
-prob_home, prob_draw, prob_away = calculate_poisson_probabilities(
-    home_stats["avg_goals"], 
-    away_stats["avg_goals"]
-)
+# ================== ML FUNCTIONS ================== #
+def load_ml_artifacts():
+    try:
+        return joblib.load("model.pkl"), joblib.load("scaler.pkl")
+    except Exception:
+        st.error("ML artifacts missing or corrupted. Please train model first.")
+        return None, None
 
-value_bets = calculate_value_bets(
-    (prob_home, prob_draw, prob_away),
-    best_odds
-)
+def predict_with_ai(home_stats, away_stats):
+    model, scaler = load_ml_artifacts()
+    if not model: return None
+    features = np.array([
+        home_stats["avg_goals"], away_stats["avg_goals"],
+        home_stats["win_rate"], away_stats["win_rate"]
+    ]).reshape(1, -1)
+    return model.predict_proba(scaler.transform(features))[0]
 
-tab1, tab2, tab3 = st.tabs(["Match Analysis", "Team History", "AI Predictions"])
+# ================== UI HELPER FUNCTIONS ================== #
+def format_date(iso_date):
+    return datetime.fromisoformat(iso_date).strftime("%d %b %Y")
 
-with tab1:
-    cols = st.columns(3)
-    outcomes = [
-        ("🏠 Home Win", prob_home, value_bets["home"], best_odds["home"]),
-        ("⚖ Draw", prob_draw, value_bets["draw"], best_odds["draw"]),
-        ("✈ Away Win", prob_away, value_bets["away"], best_odds["away"])
-    ]
+def get_team_stats_data(matches, is_home=True):
+    if not matches:
+        return {"avg_goals": 1.2 if is_home else 0.9, "win_rate": 0.5 if is_home else 0.3}
+    goals = []
+    wins = 0
+    for match in matches[-10:]:
+        team_goals = match["score"]["fullTime"]["home"] if is_home else match["score"]["fullTime"]["away"]
+        opponent_goals = match["score"]["fullTime"]["away"] if is_home else match["score"]["fullTime"]["home"]
+        goals.append(team_goals)
+        wins += 1 if team_goals > opponent_goals else 0
+    return {
+        "avg_goals": np.mean(goals) if goals else 0,
+        "win_rate": wins / len(matches[-10:]) if matches else 0
+    }
 
-    for col, (title, prob, value, odds) in zip(cols, outcomes):
-        with col:
-            st.subheader(title)
-            st.metric("Probability", f"{prob*100:.1f}%")
-            st.metric("Best Odds", f"{odds:.2f}")
-            value_color = "green" if value > 0 else "red"
-            st.markdown(f"**Value:** <span style='color:{value_color}'>{(value*100):.1f}%</span>", unsafe_allow_html=True)
+def extract_best_odds(match):
+    outcomes = {}
+    try:
+        for bookmaker in match.get("bookmakers", []):
+            for outcome in bookmaker.get("markets", [])[0].get("outcomes", []):
+                name, price = outcome["name"], outcome["price"]
+                if name not in outcomes or price > outcomes[name]:
+                    outcomes[name] = price
+        return {
+            "home": outcomes.get(match["home_team"], 1.5),
+            "draw": outcomes.get("Draw", 4.0),
+            "away": outcomes.get(match["away_team"], 6.0)
+        }
+    except Exception as e:
+        st.error(f"Грешка при извличане на коефициенти: {e}")
+        return {"home": 1.5, "draw": 4.0, "away": 6.0}
 
-with tab2:
-    col1, col2 = st.columns(2)
+def plot_prediction_pie(prediction, labels):
+    fig, ax = plt.subplots()
+    ax.pie(prediction, labels=labels, autopct='%1.1f%%', colors=["#4CAF50", "#FFC107", "#2196F3"])
+    ax.axis('equal')
+    return fig
 
-    with col1:
-        st.subheader(f"Last 10 Matches - {match['home_team']}")
-        home_matches = get_team_stats(match["home_team"])[-10:]
-        if home_matches:
-            for m in reversed(home_matches):
-                result = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
-                st.caption(f"{format_date(m['utcDate'])} | {result}")
-        else:
-            st.write("No recent matches found")
+# ================== MAIN INTERFACE ================== #
+def main():
+    st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
+    st.title("⚽ Smart Betting Analyzer")
 
-    with col2:
-        st.subheader(f"Last 10 Matches - {match['away_team']}")
-        away_matches = get_team_stats(match["away_team"])[-10:]
-        if away_matches:
-            for m in reversed(away_matches):
-                result = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
-                st.caption(f"{format_date(m['utcDate'])} | {result}")
-        else:
-            st.write("No recent matches found")
+    with st.spinner("Loading live odds..."):
+        matches = get_live_odds()
 
-with tab3:
-    if st.button("Generate AI Prediction"):
-        with st.spinner("Analyzing..."):
-            prediction = predict_with_ai(home_stats, away_stats)
+    if not matches:
+        st.warning("No matches available")
+        return
 
-        if prediction is not None:
-            st.subheader("🤖 AI Prediction Results")
-            cols = st.columns(3)
-            labels = ["Home Win", "Draw", "Away Win"]
-            colors = ["#4CAF50", "#FFC107", "#2196F3"]
+    selected_match = st.selectbox(
+        "Select Match:",
+        [f'{m["home_team"]} vs {m["away_team"]}' for m in matches],
+        index=0
+    )
+    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
 
-            for col, label, prob, color in zip(cols, labels, prediction, colors):
-                with col:
-                    st.markdown(f"<h3 style='color:{color}'>{label}</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<h2>{prob*100:.1f}%</h2>", unsafe_allow_html=True)
+    with st.spinner("Analyzing teams..."):
+        home_raw = get_team_stats(match["home_team"])
+        away_raw = get_team_stats(match["away_team"])
+        home_stats = get_team_stats_data(home_raw, is_home=True)
+        away_stats = get_team_stats_data(away_raw, is_home=False)
 
-            st.progress(max(prediction))
+    best_odds = extract_best_odds(match)
+    prob_home, prob_draw, prob_away = calculate_poisson_probabilities(
+        home_stats["avg_goals"], away_stats["avg_goals"]
+    )
+    value_bets = calculate_value_bets((prob_home, prob_draw, prob_away), best_odds)
 
-if name == "main": main()
+    tab1, tab2, tab3 = st.tabs(["Match Analysis", "Team History", "AI Predictions"])
 
+    with tab1:
+        cols = st.columns(3)
+        outcomes = [
+            ("🏠 Home Win", prob_home, value_bets["home"], best_odds["home"]),
+            ("⚖ Draw", prob_draw, value_bets["draw"], best_odds["draw"]),
+            ("✈ Away Win", prob_away, value_bets["away"], best_odds["away"])
+        ]
+        for col, (title, prob, value, odds) in zip(cols, outcomes):
+            with col:
+                st.subheader(title)
+                st.metric("Probability", f"{prob*100:.1f}%")
+                st.metric("Best Odds", f"{odds:.2f}")
+                color = "green" if value > 0 else "red"
+                st.markdown(f"**Value:** <span style='color:{color}'>{(value*100):.1f}%</span>", unsafe_allow_html=True)
+
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader(f"Last 10 Matches - {match['home_team']}")
+            if home_raw:
+                for m in reversed(home_raw[-10:]):
+                    result = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
+                    st.caption(f"{format_date(m['utcDate'])} | {result}")
+            else:
+                st.write("No recent matches found")
+        with col2:
+            st.subheader(f"Last 10 Matches - {match['away_team']}")
+            if away_raw:
+                for m in reversed(away_raw[-10:]):
+                    result = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
+                    st.caption(f"{format_date(m['utcDate'])} | {result}")
+            else:
+                st.write("No recent matches found")
+
+    with tab3:
+        if st.button("Generate AI Prediction"):
+            with st.spinner("Analyzing..."):
+                prediction = predict_with_ai(home_stats, away_stats)
+            if prediction is not None:
+                st.subheader("🤖 AI Prediction Results")
+                st.pyplot(plot_prediction_pie(prediction, ["Home Win", "Draw", "Away Win"]))
+                cols = st.columns(3)
+                labels = ["Home Win", "Draw", "Away Win"]
+                colors = ["#4CAF50", "#FFC107", "#2196F3"]
+                for col, label, prob, color in zip(cols, labels, prediction, colors):
+                    with col:
+                        st.markdown(f"<h3 style='color:{color}'>{label}</h3>", unsafe_allow_html=True)
+                        st.markdown(f"<h2>{prob*100:.1f}%</h2>", unsafe_allow_html=True)
+                st.progress(max(prediction))
+
+if __name__ == "__main__":
+    main()
+        
