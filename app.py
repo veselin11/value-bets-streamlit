@@ -13,7 +13,17 @@ import matplotlib.pyplot as plt
 # ================ CONFIGURATION ================= #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-HISTORY_FILE = "bet_history.csv"
+
+LEAGUES = {
+    "English Premier League": "soccer_epl",
+    "La Liga": "soccer_spain_la_liga",
+    "Serie A": "soccer_italy_serie_a",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "Ligue 1": "soccer_france_ligue_one",
+    "Champions League": "soccer_uefa_champs_league",
+    "Europa League": "soccer_uefa_europa_league",
+    "Eredivisie": "soccer_netherlands_eredivisie"
+}
 
 TEAM_ID_MAPPING = {
     "Arsenal": 57,
@@ -37,38 +47,18 @@ TEAM_ID_MAPPING = {
     "Wolverhampton Wanderers": 76,
     "AFC Bournemouth": 1044,
     "Southampton": 340,
-    "Leicester City": 338,
-    # Eredivisie примери:
-    "Ajax": 678,
-    "PSV": 674,
-    "Feyenoord": 675
+    "Leicester City": 338
+    # Добави още отбори тук при нужда
 }
 
-# ================ API FUNCTIONS ================= #
-@st.cache_data(ttl=86400)
-def get_available_soccer_leagues():
-    try:
-        response = requests.get(
-            "https://api.the-odds-api.com/v4/sports",
-            params={"apiKey": ODDS_API_KEY}
-        )
-        response.raise_for_status()
-        sports = response.json()
-        leagues = {
-            sport["title"]: sport["key"]
-            for sport in sports
-            if sport["key"].startswith("soccer_") and not sport.get("has_outrights", False)
-        }
-        return leagues
-    except Exception as e:
-        st.error(f"Грешка при зареждане на лиги: {str(e)}")
-        return {}
+HISTORY_FILE = "bet_history.csv"
 
+# ================ API FUNCTIONS ================= #
 @st.cache_data(ttl=3600)
-def get_live_odds(sport_key):
+def get_live_odds(sport_code):
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            f"https://api.the-odds-api.com/v4/sports/{sport_code}/odds",
             params={
                 "apiKey": ODDS_API_KEY,
                 "regions": "eu",
@@ -127,7 +117,7 @@ def load_ml_artifacts():
     try:
         return joblib.load("model.pkl"), joblib.load("scaler.pkl")
     except FileNotFoundError:
-        st.error("ML артефактите липсват! Обучете модела първо.")
+        st.error("ML artifacts missing! Please train the model first.")
         return None, None
 
 def predict_with_ai(home_stats, away_stats):
@@ -170,7 +160,7 @@ def plot_probabilities(title, labels, probabilities):
     ax.set_ylabel("Вероятност")
     st.pyplot(fig)
 
-# ================ HISTORY ========================== #
+# ================ HISTORY MANAGEMENT =============== #
 def save_history(match, probabilities, odds, values, chosen):
     row = {
         "datetime": datetime.now().isoformat(),
@@ -195,39 +185,38 @@ def save_history(match, probabilities, odds, values, chosen):
 def display_history():
     if os.path.exists(HISTORY_FILE):
         df = pd.read_csv(HISTORY_FILE)
-        filter_team = st.text_input("Филтрирай по отбор:")
+        filter_team = st.text_input("Филтрирай по отбор (частично име):")
         if filter_team:
             df = df[df['match'].str.contains(filter_team, case=False)]
         st.dataframe(df)
     else:
-        st.info("Няма записана история.")
+        st.info("Все още няма записана история.")
 
 # ================ MAIN APP ========================= #
 def main():
     st.set_page_config(page_title="Smart Bet Advisor", layout="wide")
-    st.title("⚽ Smart Betting Analyzer")
+    st.title("\u26bd Smart Betting Analyzer")
 
-    leagues = get_available_soccer_leagues()
-    if not leagues:
-        st.stop()
+    st.sidebar.header("Избор на първенство")
+    selected_league_name = st.sidebar.selectbox("Първенство:", list(LEAGUES.keys()))
+    SPORT = LEAGUES[selected_league_name]
 
-    league_name = st.selectbox("Изберете първенство:", list(leagues.keys()))
-    SPORT = leagues[league_name]
-
-    with st.spinner("Зареждане на мачове..."):
+    with st.spinner("Зареждане на live коефициенти..."):
         matches = get_live_odds(SPORT)
 
     if not matches:
-        st.warning("Няма налични мачове за избраното първенство.")
+        st.warning("Няма налични мачове в момента.")
         return
 
     match_options = [f"{m['home_team']} vs {m['away_team']}" for m in matches]
     selected_match = st.selectbox("Изберете мач:", match_options)
+
     match = next(m for m in matches if f"{m['home_team']} vs {m['away_team']}" == selected_match)
 
-    with st.spinner("Извличане на статистики..."):
+    with st.spinner("Анализ на отборите..."):
         home_matches = get_team_stats(match["home_team"])
         away_matches = get_team_stats(match["away_team"])
+
         home_stats = get_team_stats_data(home_matches, is_home=True)
         away_stats = get_team_stats_data(away_matches, is_home=False)
 
@@ -243,7 +232,7 @@ def main():
     prob = calculate_poisson_probabilities(home_stats["avg_goals"], away_stats["avg_goals"])
     values = calculate_value_bets(prob, best_odds)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Анализ на мача", "История на отборите", "AI Прогноза", "История на залозите"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Анализ на мача", "История на отборите", "AI Прогнози", "История на залозите"])
 
     with tab1:
         cols = st.columns(3)
@@ -289,10 +278,11 @@ def main():
     with tab3:
         st.subheader("AI Прогноза")
         if st.button("Генерирай AI прогноза"):
-            with st.spinner("AI анализ..."):
+            with st.spinner("Анализ..."):
                 ai_prob = predict_with_ai(home_stats, away_stats)
             if ai_prob is not None:
-                plot_probabilities("AI Модел - Вероятности", [match["home_team"], "Равен", match["away_team"]], ai_prob)
+                labels = [match["home_team"], "Равен", match["away_team"]]
+                plot_probabilities("AI Модел - Вероятности", labels, ai_prob)
             else:
                 st.warning("AI моделът не е наличен.")
 
@@ -302,3 +292,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
