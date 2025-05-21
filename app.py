@@ -114,21 +114,35 @@ def predict_with_ai(home_stats, away_stats):
 def format_date(iso_date):
     return datetime.fromisoformat(iso_date).strftime("%d %b %Y")
 
-def get_team_stats_data(matches, is_home=True):
+def get_team_stats_data(matches, team_name, is_home=True):
     if not matches:
+        # Ако няма данни връщаме фиктивни стойности
         return {"avg_goals": 1.2 if is_home else 0.9, "win_rate": 0.5 if is_home else 0.3}
     goals = []
     wins = 0
-    for match in matches[-10:]:
+    count = 0
+    for match in matches[::-1]:  # последни срещи (обратен ред)
+        # Проверяваме дали даденият отбор е домакин или гост и филтрираме
         if is_home:
+            if match["homeTeam"]["name"] != team_name:
+                continue
             team_goals = match["score"]["fullTime"]["home"]
             opp_goals = match["score"]["fullTime"]["away"]
         else:
+            if match["awayTeam"]["name"] != team_name:
+                continue
             team_goals = match["score"]["fullTime"]["away"]
             opp_goals = match["score"]["fullTime"]["home"]
+
         goals.append(team_goals)
-        wins += 1 if team_goals > opp_goals else 0
-    return {"avg_goals": np.mean(goals), "win_rate": wins / 10}
+        if team_goals > opp_goals:
+            wins += 1
+        count += 1
+        if count == 10:
+            break
+    if count == 0:
+        return {"avg_goals": 1.2 if is_home else 0.9, "win_rate": 0.5 if is_home else 0.3}
+    return {"avg_goals": np.mean(goals), "win_rate": wins / count}
 
 def plot_probabilities(title, labels, probabilities):
     fig, ax = plt.subplots()
@@ -194,8 +208,8 @@ def main():
         home_matches = get_team_stats(match["home_team"])
         away_matches = get_team_stats(match["away_team"])
 
-        home_stats = get_team_stats_data(home_matches, is_home=True)
-        away_stats = get_team_stats_data(away_matches, is_home=False)
+        home_stats = get_team_stats_data(home_matches, match["home_team"], is_home=True)
+        away_stats = get_team_stats_data(away_matches, match["away_team"], is_home=False)
 
     try:
         best_odds = {
@@ -235,24 +249,36 @@ def main():
         st.subheader("Последни 10 мача на двата отбора")
         for team, matches_data in [(match["home_team"], home_matches), (match["away_team"], away_matches)]:
             st.markdown(f"**{team}**")
-            for m in matches_data[-10:]:
+            displayed = 0
+            for m in matches_data[::-1]:  # Последни мачове в обратен ред
+                if displayed >= 10:
+                    break
+                # Покажи само мачовете на отбора (домакин или гост)
+                if team != m["homeTeam"]["name"] and team != m["awayTeam"]["name"]:
+                    continue
                 date = format_date(m["utcDate"])
                 score = m["score"]["fullTime"]
                 home = m["homeTeam"]["name"]
                 away = m["awayTeam"]["name"]
                 result = f"{score['home']} - {score['away']}"
                 st.write(f"{date} | {home} vs {away} | {result}")
+                displayed += 1
 
         st.subheader("Директни срещи между отборите")
         common = [m for m in home_matches if
-                  (m["homeTeam"]["name"] == match["away_team"] or m["awayTeam"]["name"] == match["away_team"])]
-        for m in common[-10:]:
+                  (m["homeTeam"]["name"] == match["away_team"] or m["awayTeam"]["name"] == match["away_team"]) and
+                  (m["homeTeam"]["name"] == match["home_team"] or m["awayTeam"]["name"] == match["home_team"])]
+        displayed = 0
+        for m in common[::-1]:
+            if displayed >= 10:
+                break
             date = format_date(m["utcDate"])
             score = m["score"]["fullTime"]
             home = m["homeTeam"]["name"]
             away = m["awayTeam"]["name"]
             result = f"{score['home']} - {score['away']}"
             st.write(f"{date} | {home} vs {away} | {result}")
+            displayed += 1
 
     with tab3:
         st.subheader("AI Прогноза")
@@ -264,11 +290,4 @@ def main():
                                    [match["home_team"], "Равен", match["away_team"]],
                                    ai_prob)
             else:
-                st.warning("AI моделът не е наличен.")
-
-    with tab4:
-        st.subheader("История на записаните залози")
-        display_history()
-
-if __name__ == "__main__":
-    main()
+                st.warning("AI модел
