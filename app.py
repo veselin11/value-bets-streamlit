@@ -254,26 +254,4 @@ def main():
         chosen = st.radio("Изберете залог за запазване:", [o[0] for o in outcomes])
         if st.button("Запази прогноза"):
             save_history(match, prob, best_odds, values, chosen)
-            st.success("Прогнозата е записана!")
-
-    with tab2:
-        st.subheader(f"Последни 10 мача на {match['home_team']}")
-        if home_matches:
-            for m in reversed(home_matches):
-                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
-                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
-        else:
-            st.write("Няма намерени мачове.")
-
-        st.subheader(f"Последни 10 мача на {match['away_team']}")
-        if away_matches:
-            for m in reversed(away_matches):
-                result = f"{m['score']['fullTime']['home']} - {m['score']['fullTime']['away']}"
-                st.caption(f"{format_date(m['utcDate'])} | {m['home_team']['name']} {result} {m['away_team']['name']}")
-        else:
-            st.write("Няма намерени мачове.")
-
-    with tab3:
-        st.subheader("AI Прогноза")
-        if st.button("Генерирай AI прогноза"):
-            with st
+            st.success("Прогнозата е
