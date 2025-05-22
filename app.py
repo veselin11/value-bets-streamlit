@@ -10,23 +10,24 @@ import joblib
 # ================== КОНФИГУРАЦИЯ ================== #
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+SPORT = "soccer_epl"
+
+TEAM_ID_MAPPING = {
+    "Manchester City": 65,
+    "AFC Bournemouth": 1044,
+    "Liverpool": 64,
+    "Everton": 62,
+    "Arsenal": 57,
+    "Tottenham Hotspur": 73,
+    # Добави и други, ако желаеш
+}
 
 # ================== API ФУНКЦИИ ================== #
 @st.cache_data(ttl=3600)
-def get_sports():
-    try:
-        response = requests.get("https://api.the-odds-api.com/v4/sports", params={"apiKey": ODDS_API_KEY})
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Грешка при взимане на спортове: {str(e)}")
-        return []
-
-@st.cache_data(ttl=3600)
-def get_odds(sport_key):
+def get_live_odds():
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
             params={
                 "apiKey": ODDS_API_KEY,
                 "regions": "eu",
@@ -40,16 +41,6 @@ def get_odds(sport_key):
         st.error(f"Грешка при взимане на коефициенти: {str(e)}")
         return []
 
-TEAM_ID_MAPPING = {
-    "Manchester City": 65,
-    "AFC Bournemouth": 1044,
-    "Liverpool": 64,
-    "Everton": 62,
-    "Arsenal": 57,
-    "Tottenham Hotspur": 73,
-    # ... добавете останалите отбори
-}
-
 @st.cache_data(ttl=3600)
 def get_team_stats(team_name):
     team_id = TEAM_ID_MAPPING.get(team_name)
@@ -62,7 +53,7 @@ def get_team_stats(team_name):
             params={"status": "FINISHED", "limit": 20}
         )
         response.raise_for_status()
-        return response.json().get("matches", [])
+        return response.json()["matches"]
     except Exception as e:
         st.error(f"Грешка при взимане на статистики за {team_name}: {str(e)}")
         return None
@@ -70,8 +61,8 @@ def get_team_stats(team_name):
 # ================== АНАЛИТИЧНИ ФУНКЦИИ ================== #
 def calculate_poisson_probabilities(home_avg, away_avg):
     home_win, draw, away_win = 0, 0, 0
-    for i in range(0, 6):
-        for j in range(0, 6):
+    for i in range(6):
+        for j in range(6):
             p = poisson.pmf(i, home_avg) * poisson.pmf(j, away_avg)
             if i > j:
                 home_win += p
@@ -84,11 +75,8 @@ def calculate_poisson_probabilities(home_avg, away_avg):
 def calculate_value_bets(probabilities, odds):
     value = {}
     for outcome in ['home', 'draw', 'away']:
-        if odds[outcome] == 0:
-            value[outcome] = -1  # Ако няма коефициент, стойността е отрицателна
-        else:
-            implied_prob = 1 / odds[outcome]
-            value[outcome] = probabilities[outcome] - implied_prob
+        implied_prob = 1 / odds[outcome]
+        value[outcome] = probabilities[outcome] - implied_prob
     return value
 
 # ================== МАШИННО ОБУЧЕНИЕ ================== #
@@ -109,49 +97,14 @@ def predict_with_ai(home_stats, away_stats):
         st.error(f"Грешка при AI прогноза: {str(e)}")
         return None
 
-def process_team_stats(matches, is_home):
-    if not matches:
-        return {"avg_goals": 1.0, "win_rate": 0.5}
-    goals = []
-    wins = 0
-    for m in matches[-10:]:
-        score = m["score"]["fullTime"]
-        if is_home:
-            goals.append(score.get("home", 0))
-            if score.get("home", 0) > score.get("away", 0):
-                wins += 1
-        else:
-            goals.append(score.get("away", 0))
-            if score.get("away", 0) > score.get("home", 0):
-                wins += 1
-    if len(matches) >= 10:
-        win_rate = wins / 10
-    elif len(matches) > 0:
-        win_rate = wins / len(matches)
-    else:
-        win_rate = 0
-    avg_goals = np.mean(goals) if goals else 1.0
-    return {"avg_goals": avg_goals, "win_rate": win_rate}
-
 # ================== ПОТРЕБИТЕЛСКИ ИНТЕРФЕЙС ================== #
 def main():
     st.set_page_config(page_title="Advanced Bet Analyzer", layout="wide", page_icon="⚽")
     st.title("🔮 Advanced Bet Analyzer")
 
-    # Взимаме спортове, филтрираме само футболни
-    sports = get_sports()
-    soccer_sports = {s["title"]: s["key"] for s in sports if s["group"] == "soccer"}
-
-    if not soccer_sports:
-        st.error("Няма намерени футболни първенства.")
-        return
-
-    selected_sport = st.selectbox("Избери първенство", list(soccer_sports.keys()))
-    sport_key = soccer_sports[selected_sport]
-
-    matches = get_odds(sport_key)
+    matches = get_live_odds()
     if not matches:
-        st.warning("Няма налични мачове в момента за избраното първенство.")
+        st.warning("Няма налични мачове в момента")
         return
 
     selected_match = st.selectbox(
@@ -163,10 +116,25 @@ def main():
     home_stats_raw = get_team_stats(match["home_team"])
     away_stats_raw = get_team_stats(match["away_team"])
 
-    # Проверка за налични статистики
-    if home_stats_raw is None or away_stats_raw is None:
-        st.warning("Няма достатъчно статистики за избраните отбори.")
-        return
+    def process_team_stats(matches, is_home):
+        if not matches:
+            return {"avg_goals": 1.0, "win_rate": 0.5}
+        goals = []
+        wins = 0
+        last_matches = matches[-10:] if len(matches) >= 10 else matches
+        for m in last_matches:
+            score = m["score"]["fullTime"]
+            if is_home:
+                goals.append(score["home"])
+                if score["home"] > score["away"]:
+                    wins += 1
+            else:
+                goals.append(score["away"])
+                if score["away"] > score["home"]:
+                    wins += 1
+        win_rate = wins / len(last_matches) if last_matches else 0
+        avg_goals = np.mean(goals) if goals else 1.0
+        return {"avg_goals": avg_goals, "win_rate": win_rate}
 
     home_stats = process_team_stats(home_stats_raw, is_home=True)
     away_stats = process_team_stats(away_stats_raw, is_home=False)
@@ -175,19 +143,11 @@ def main():
         home_stats["avg_goals"], away_stats["avg_goals"]
     )
 
-    # Взимаме най-добрите коефициенти за всеки изход
-    try:
-        best_odds = {
-            "home": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["home_team"]),
-            "draw": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"].lower() == "draw"),
-            "away": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["away_team"])
-        }
-    except Exception as e:
-        st.error(f"Грешка при взимане на коефициенти: {str(e)}")
-        best_odds = {"home": 0, "draw": 0, "away": 0}
-
-    # Покажи коефициентите за debug
-    st.write("**Най-добри коефициенти:**", best_odds)
+    best_odds = {
+        "home": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["home_team"]),
+        "draw": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == "Draw"),
+        "away": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["away_team"])
+    }
 
     value_bets = calculate_value_bets(
         {"home": prob_home, "draw": prob_draw, "away": prob_away},
@@ -222,13 +182,13 @@ def main():
             st.write(f"**Последни 5 мача {match['home_team']}:**")
             if home_stats_raw:
                 for m in home_stats_raw[-5:]:
-                    result = f"{m['score']['fullTime'].get('home', 0)}-{m['score']['fullTime'].get('away', 0)}"
+                    result = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
                     st.write(f"- {result} ({m['utcDate'][:10]})")
         with col2:
             st.write(f"**Последни 5 мача {match['away_team']}:**")
             if away_stats_raw:
                 for m in away_stats_raw[-5:]:
-                    result = f"{m['score']['fullTime'].get('away', 0)}-{m['score']['fullTime'].get('home', 0)}"
+                    result = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
                     st.write(f"- {result} ({m['utcDate'][:10]})")
 
     with tab3:
