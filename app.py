@@ -8,9 +8,16 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 # ================== КОНФИГУРАЦИЯ ================== #
+LEAGUES = {
+    "Англия - Висша лига": "soccer_epl",
+    "Испания - Ла Лига": "soccer_spain_la_liga",
+    "Италия - Серия А": "soccer_italy_serie_a",
+    "Германия - Бундеслига": "soccer_germany_bundesliga",
+    "Франция - Лига 1": "soccer_france_ligue_one"
+}
+
 FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
-SPORT = "soccer_epl"
 
 TEAM_ID_MAPPING = {
     "Manchester City": 65,
@@ -19,15 +26,15 @@ TEAM_ID_MAPPING = {
     "Everton": 62,
     "Arsenal": 57,
     "Tottenham Hotspur": 73,
-    # ... добавете останалите отбори
+    # ... добави още отбори при нужда
 }
 
-# ================== API ФУНКЦИИ ================== #
+# ================== API ================== #
 @st.cache_data(ttl=3600)
-def get_live_odds():
+def get_live_odds(sport_key):
     try:
         response = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
             params={
                 "apiKey": ODDS_API_KEY,
                 "regions": "eu",
@@ -58,7 +65,7 @@ def get_team_stats(team_name):
         st.error(f"Грешка при взимане на статистики за {team_name}: {str(e)}")
         return None
 
-# ================== АНАЛИТИЧНИ ФУНКЦИИ ================== #
+# ================== АНАЛИЗ ================== #
 def calculate_poisson_probabilities(home_avg, away_avg):
     home_win, draw, away_win = 0, 0, 0
     for i in range(0, 6):
@@ -79,7 +86,7 @@ def calculate_value_bets(probabilities, odds):
         value[outcome] = probabilities[outcome] - implied_prob
     return value
 
-# ================== МАШИННО ОБУЧЕНИЕ ================== #
+# ================== AI ================== #
 def predict_with_ai(home_stats, away_stats):
     try:
         model = joblib.load("model.pkl")
@@ -97,18 +104,49 @@ def predict_with_ai(home_stats, away_stats):
         st.error(f"Грешка при AI прогноза: {str(e)}")
         return None
 
-# ================== ПОТРЕБИТЕЛСКИ ИНТЕРФЕЙС ================== #
+# ================== Обработка ================== #
+def process_team_stats(matches, is_home):
+    if not matches:
+        return {"avg_goals": 1.0, "win_rate": 0.5, "avg_conceded": 1.0, "btts_rate": 0.5, "over_2_5_rate": 0.5}
+
+    recent = matches[-10:] if len(matches) >= 10 else matches
+    goals, conceded = [], []
+    wins = btts = over_2_5 = 0
+
+    for m in recent:
+        score = m["score"]["fullTime"]
+        home, away = score.get("home", 0), score.get("away", 0)
+        g, c = (home, away) if is_home else (away, home)
+        goals.append(g)
+        conceded.append(c)
+        if g > c: wins += 1
+        if g > 0 and c > 0: btts += 1
+        if (g + c) > 2.5: over_2_5 += 1
+
+    count = len(recent)
+    return {
+        "avg_goals": np.mean(goals),
+        "win_rate": wins / count,
+        "avg_conceded": np.mean(conceded),
+        "btts_rate": btts / count,
+        "over_2_5_rate": over_2_5 / count
+    }
+
+# ================== UI ================== #
 def main():
-    st.set_page_config(page_title="Advanced Bet Analyzer", layout="wide", page_icon="⚽")
+    st.set_page_config(page_title="Advanced Bet Analyzer", layout="wide")
     st.title("🔮 Advanced Bet Analyzer")
 
-    matches = get_live_odds()
+    selected_league = st.selectbox("Избери първенство:", list(LEAGUES.keys()))
+    sport_key = LEAGUES[selected_league]
+
+    matches = get_live_odds(sport_key)
     if not matches:
-        st.warning("Няма налични мачове в момента")
+        st.warning("Няма мачове.")
         return
 
     selected_match = st.selectbox(
-        "Избери мач за анализ:",
+        "Избери мач:",
         [f'{m["home_team"]} vs {m["away_team"]}' for m in matches]
     )
     match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
@@ -116,40 +154,11 @@ def main():
     home_stats_raw = get_team_stats(match["home_team"])
     away_stats_raw = get_team_stats(match["away_team"])
 
-    def process_team_stats(matches, is_home):
-        if not matches:
-            return {"avg_goals": 1.0, "win_rate": 0.5}
-
-        goals = []
-        wins = 0
-        recent_matches = matches[-10:] if len(matches) >= 10 else matches
-
-        for m in recent_matches:
-            score = m["score"]["fullTime"]
-            home_goals = score.get("home", 0)
-            away_goals = score.get("away", 0)
-
-            if is_home:
-                goals.append(home_goals)
-                if home_goals > away_goals:
-                    wins += 1
-            else:
-                goals.append(away_goals)
-                if away_goals > home_goals:
-                    wins += 1
-
-        match_count = len(recent_matches)
-        win_rate = wins / match_count if match_count > 0 else 0
-        avg_goals = np.mean(goals) if goals else 1.0
-
-        return {"avg_goals": avg_goals, "win_rate": win_rate}
-
-    home_stats = process_team_stats(home_stats_raw, is_home=True)
-    away_stats = process_team_stats(away_stats_raw, is_home=False)
+    home_stats = process_team_stats(home_stats_raw, True)
+    away_stats = process_team_stats(away_stats_raw, False)
 
     prob_home, prob_draw, prob_away = calculate_poisson_probabilities(
-        home_stats["avg_goals"], away_stats["avg_goals"]
-    )
+        home_stats["avg_goals"], away_stats["avg_goals"])
 
     best_odds = {
         "home": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["home_team"]),
@@ -158,56 +167,29 @@ def main():
     }
 
     value_bets = calculate_value_bets(
-        {"home": prob_home, "draw": prob_draw, "away": prob_away},
-        best_odds
-    )
+        {"home": prob_home, "draw": prob_draw, "away": prob_away}, best_odds)
 
-    tab1, tab2, tab3 = st.tabs(["Основен анализ", "Разширена статистика", "AI Прогнози"])
+    tab1, tab2, tab3 = st.tabs(["Основен анализ", "Разширена статистика", "AI Прогноза"])
 
     with tab1:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.subheader(f"🏠 {match['home_team']}")
-            st.metric("Средни голове", f"{home_stats['avg_goals']:.2f}")
-            st.metric("Шанс за победа", f"{prob_home*100:.1f}%")
-            st.metric("Value Score", f"{value_bets['home']*100:.1f}%", delta="Стойностен" if value_bets['home'] > 0 else "Нестойностен")
-
-        with col2:
-            st.subheader("⚖ Равен")
-            st.metric("Шанс", f"{prob_draw*100:.1f}%")
-            st.metric("Value Score", f"{value_bets['draw']*100:.1f}%", delta="Стойностен" if value_bets['draw'] > 0 else "Нестойностен")
-
-        with col3:
-            st.subheader(f"✈ {match['away_team']}")
-            st.metric("Средни голове", f"{away_stats['avg_goals']:.2f}")
-            st.metric("Шанс за победа", f"{prob_away*100:.1f}%")
-            st.metric("Value Score", f"{value_bets['away']*100:.1f}%", delta="Стойностен" if value_bets['away'] > 0 else "Нестойностен")
+        st.metric("🏠 Шанс за домакин:", f"{prob_home*100:.1f}%")
+        st.metric("⚖️ Шанс за равен:", f"{prob_draw*100:.1f}%")
+        st.metric("✈️ Шанс за гост:", f"{prob_away*100:.1f}%")
 
     with tab2:
-        st.subheader("📈 Исторически показатели")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write(f"**Последни 5 мача {match['home_team']}:**")
-            if home_stats_raw:
-                for m in home_stats_raw[-5:]:
-                    result = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
-                    st.write(f"- {result} ({m['utcDate'][:10]})")
-        with col2:
-            st.write(f"**Последни 5 мача {match['away_team']}:**")
-            if away_stats_raw:
-                for m in away_stats_raw[-5:]:
-                    result = f"{m['score']['fullTime']['away']}-{m['score']['fullTime']['home']}"
-                    st.write(f"- {result} ({m['utcDate'][:10]})")
+        st.write("### Статистика домакин:")
+        st.json(home_stats)
+        st.write("### Статистика гост:")
+        st.json(away_stats)
 
     with tab3:
-        st.subheader("🤖 AI Прогноза")
-        if st.button("Генерирай прогноза"):
-            ai_prediction = predict_with_ai(home_stats, away_stats)
-            if ai_prediction is not None:
-                st.write("### Вероятности:")
-                st.write(f"- Победа {match['home_team']}: {ai_prediction[0]*100:.1f}%")
-                st.write(f"- Равен: {ai_prediction[1]*100:.1f}%")
-                st.write(f"- Победа {match['away_team']}: {ai_prediction[2]*100:.1f}%")
+        if st.button("Генерирай AI прогноза"):
+            prediction = predict_with_ai(home_stats, away_stats)
+            if prediction is not None:
+                st.write(f"Победа {match['home_team']}: {prediction[0]*100:.1f}%")
+                st.write(f"Равенство: {prediction[1]*100:.1f}%")
+                st.write(f"Победа {match['away_team']}: {prediction[2]*100:.1f}%")
 
 if __name__ == "__main__":
     main()
+    
