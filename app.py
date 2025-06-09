@@ -33,7 +33,8 @@ def fetch_favorite_matches():
     football_leagues = [s for s in sports_res.json() if "soccer" in s["key"] and s["active"]]
 
     now_utc = datetime.now(timezone.utc)
-    max_time = now_utc + timedelta(hours=24)
+    min_time = now_utc - timedelta(hours=1)    # 1 час назад
+    max_time = now_utc + timedelta(hours=24)   # 24 часа напред
 
     for league in football_leagues:
         odds_url = f"https://api.the-odds-api.com/v4/sports/{league['key']}/odds"
@@ -50,11 +51,10 @@ def fetch_favorite_matches():
         for game in odds_res.json():
             try:
                 match_id = game["id"]
-                # datetime с timezone info
                 match_time = datetime.fromisoformat(game["commence_time"].replace("Z", "+00:00"))
 
-                # Филтриране само за мачове в следващите 24 часа
-                if not (now_utc <= match_time <= max_time):
+                # Филтриране за мачове започнали до 1 час назад и в следващите 24 часа
+                if not (min_time <= match_time <= max_time):
                     continue
 
                 home = game["home_team"]
@@ -91,10 +91,8 @@ def fetch_favorite_matches():
 
     return pd.DataFrame(all_matches)
 
-# Опция за ръчно обновяване
 refresh_clicked = st.button("🔄 Обнови мачовете")
 
-# Автоматично обновяване според интервала
 time_since_last = time.time() - st.session_state.last_update
 if refresh_clicked or time_since_last > REFRESH_INTERVAL:
     st.session_state.last_update = time.time()
@@ -104,13 +102,12 @@ else:
     df = st.session_state.get("df", pd.DataFrame())
 
 if df.empty:
-    st.warning("Няма намерени мачове с фаворити при зададения праг и в следващите 24 часа.")
+    st.warning("Няма намерени мачове с фаворити при зададения праг и в рамките на 25 часа (включително мачове на живо).")
 else:
     df_sorted = df.sort_values("Начало")
     signals_count = df_sorted["Сигнал"].value_counts().get("🔔", 0)
     st.markdown(f"### Общо сигнали: {signals_count}")
     st.dataframe(df_sorted, use_container_width=True)
 
-# Автоматично презареждане
 if time.time() - st.session_state.last_update > REFRESH_INTERVAL:
     st.experimental_rerun()
