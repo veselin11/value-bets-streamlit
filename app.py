@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 
 # --- Конфигурация ---
 API_KEY = st.secrets["ODDS_API_KEY"]
+
 LEAGUES = {
     "Premier League": "soccer_epl",
     "La Liga": "soccer_spain_la_liga",
@@ -34,18 +35,20 @@ def fetch_odds(league_code):
 
 # --- Функция за филтриране на фаворити ---
 def filter_favorites(games, threshold=1.5):
-    """Връща списък от мачове, където фаворитът има коефициент под threshold"""
     filtered = []
     for game in games:
         try:
-            markets = game.get("bookmakers", [])[0].get("markets", [])
-            h2h = next((m for m in markets if m["key"]=="h2h"), None)
+            bookmakers = game.get("bookmakers", [])
+            if not bookmakers:
+                continue
+            markets = bookmakers[0].get("markets", [])
+            h2h = next((m for m in markets if m["key"] == "h2h"), None)
             if not h2h:
                 continue
-            odds_list = [o["price"] for o in h2h["outcomes"]]
-            min_odd = min(odds_list)
+            outcomes = h2h["outcomes"]
+            min_odd = min(o["price"] for o in outcomes)
             if min_odd <= threshold:
-                favorite = min(h2h["outcomes"], key=lambda x: x["price"])
+                favorite = min(outcomes, key=lambda x: x["price"])
                 filtered.append({
                     "league": game["sport_title"],
                     "match": f"{game['home_team']} vs {game['away_team']}",
@@ -54,10 +57,8 @@ def filter_favorites(games, threshold=1.5):
                     "initial_odd": favorite["price"],
                     "game_id": game["id"]
                 })
-        except Exception as e:
-            # Ако има грешка при данните, игнорирай този мач
+        except Exception:
             continue
-    # Сортиране по начален час
     filtered.sort(key=lambda x: x["commence_time"])
     return filtered
 
@@ -68,7 +69,7 @@ st.title("Live Фаворити и Коефициенти ⚽")
 st.sidebar.header("Настройки на сигнала")
 odd_increase_threshold = st.sidebar.slider("Минимално покачване за сигнал", 0.05, 1.0, 0.2, 0.05)
 refresh_interval = st.sidebar.slider("Интервал за обновяване (сек.)", 30, 600, 300, 30)
-enable_sound = st.sidebar.checkbox("Включи звуков сигнал при промяна", value=True)
+enable_sound = st.sidebar.checkbox("Включи звуков сигнал при промяна", value=False)
 
 # Избор на лига
 selected_league_name = st.sidebar.selectbox("Избери лига", list(LEAGUES.keys()))
@@ -78,16 +79,13 @@ selected_league_code = LEAGUES[selected_league_name]
 all_games = fetch_odds(selected_league_code)
 favorites = filter_favorites(all_games, threshold=1.5)
 
-# Съхраняваме предишните коефициенти в сесия
 if "prev_odds" not in st.session_state:
     st.session_state.prev_odds = {}
 
-# Таблица за показване
 table_data = []
 alerts = []
 
 for fav in favorites:
-    # Взимаме текущи коефициенти за този мач
     current_game = next((g for g in all_games if g["id"] == fav["game_id"]), None)
     if current_game:
         try:
@@ -100,18 +98,18 @@ for fav in favorites:
     else:
         current_odd = None
 
-    # Вземаме стария коефициент за сравнение
     prev_odd = st.session_state.prev_odds.get(fav["game_id"], fav["initial_odd"])
 
-    # Проверяваме дали има значимо покачване
     if current_odd and (current_odd - prev_odd) >= odd_increase_threshold:
         alerts.append(f"⚠️ Коефициент за {fav['favorite_team']} в мача {fav['match']} се покачи от {prev_odd:.2f} на {current_odd:.2f}!")
-
-        # Може да добавиш звуков сигнал с JS или HTML, но Streamlit има ограничения
         if enable_sound:
-            st.audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg", format="audio/ogg")
+            # Вграден звуков сигнал с HTML5 (само при браузър)
+            st.markdown("""
+                <audio autoplay>
+                    <source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg">
+                </audio>
+            """, unsafe_allow_html=True)
 
-    # Запазваме текущия коефициент
     st.session_state.prev_odds[fav["game_id"]] = current_odd
 
     table_data.append({
@@ -123,16 +121,14 @@ for fav in favorites:
         "Актуален коефициент": current_odd
     })
 
-# Показваме таблицата
 df = pd.DataFrame(table_data)
+
 st.dataframe(df, use_container_width=True)
 
-# Показваме алармите
 if alerts:
     for alert in alerts:
         st.warning(alert)
 
-# Автоматично опресняване
-st.write(f"Автоматично обновяване на данните на всеки {refresh_interval} секунди...")
+st.write(f"Автоматично обновяване на всеки {refresh_interval} секунди...")
 time.sleep(refresh_interval)
 st.experimental_rerun()
