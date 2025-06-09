@@ -4,7 +4,7 @@ import sqlite3
 import requests
 from datetime import datetime, timedelta
 import pytz
-------------------- DB -------------------
+#------------------- DB -------------------
 
 DB_PATH = "bets.db" conn = sqlite3.connect(DB_PATH, check_same_thread=False) c = conn.cursor() c.execute('''CREATE TABLE IF NOT EXISTS bets ( id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, match TEXT, market TEXT, odds REAL, stake REAL, status TEXT, is_value_bet INTEGER )''') conn.commit()
 
@@ -12,7 +12,7 @@ def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0): c.
 
 def get_bets(): return pd.read_sql("SELECT * FROM bets", conn)
 
-------------------- API -------------------
+#------------------- API -------------------
 
 import toml secrets = toml.load(".streamlit/secrets.toml") ODDS_API_KEY = secrets["ODDS_API_KEY"]
 
@@ -45,7 +45,7 @@ for league in all_leagues:
 
 return sorted(upcoming, key=lambda x: x["datetime"])
 
-------------------- UI -------------------
+#------------------- UI -------------------
 
 st.title("⚽ Value Bets Tracker")
 
