@@ -1,51 +1,72 @@
+import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime
+import toml
 
-ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+# Зареждане на ключа от secrets.toml
+secrets = toml.load(".streamlit/secrets.toml")
+ODDS_API_KEY = secrets["ODDS_API_KEY"]
 
-def get_all_sports():
-    url = "https://api.the-odds-api.com/v4/sports"
-    params = {
-        "apiKey": ODDS_API_KEY
-    }
-    res = requests.get(url, params=params)
-    return res.json()
+st.title("📡 Тест: Зареждане на всички активни футболни мачове от ODDS API")
 
-def get_odds_for_football_leagues():
-    sports = get_all_sports()
-    football_sports = [s for s in sports if "soccer" in s["key"] and s["active"]]
+def fetch_all_football_odds():
+    all_matches = []
 
-    print(f"Намерени {len(football_sports)} активни футболни лиги.\n")
+    # 1. Взимане на всички спортове
+    sports_url = "https://api.the-odds-api.com/v4/sports"
+    res = requests.get(sports_url, params={"apiKey": ODDS_API_KEY})
+    if res.status_code != 200:
+        st.error("Грешка при зареждане на спортовете")
+        return []
 
-    for sport in football_sports:
-        print(f"Проверяваме: {sport['title']} ({sport['key']})")
-        url = f"https://api.the-odds-api.com/v4/sports/{sport['key']}/odds"
+    sports = res.json()
+
+    # 2. Филтриране на активни футболни лиги
+    football_leagues = [s for s in sports if "soccer" in s["key"] and s["active"]]
+
+    # 3. Зареждане на коефициенти за всяка лига
+    for league in football_leagues:
+        odds_url = f"https://api.the-odds-api.com/v4/sports/{league['key']}/odds"
         params = {
             "apiKey": ODDS_API_KEY,
             "regions": "eu",
             "markets": "h2h",
             "oddsFormat": "decimal"
         }
-        res = requests.get(url, params=params)
-        if res.status_code != 200:
-            print(f" ❌ Грешка за {sport['key']}")
+        odds_res = requests.get(odds_url, params=params)
+        if odds_res.status_code != 200:
             continue
 
-        data = res.json()
-        if not data:
-            print(" ⚠️  Няма налични мачове.\n")
-            continue
+        odds_data = odds_res.json()
 
-        print(f" ✅ {len(data)} мача намерени.\n")
-        for match in data[:3]:  # само първите 3
-            print(f"- {match['home_team']} vs {match['away_team']}")
-            print(f"  Начало: {match['commence_time']}")
-            for book in match['bookmakers'][:1]:
-                for market in book['markets']:
-                    if market['key'] == 'h2h':
-                        print("  Коефициенти:")
-                        for outcome in market['outcomes']:
-                            print(f"   - {outcome['name']}: {outcome['price']}")
-            print()
+        for game in odds_data:
+            try:
+                match_time = game["commence_time"].replace("T", " ").replace("Z", "")
+                home = game["home_team"]
+                away = game["away_team"]
+                league_title = league["title"]
+                bookmaker = game["bookmakers"][0]
+                outcomes = next(m["outcomes"] for m in bookmaker["markets"] if m["key"] == "h2h")
+                odds_dict = {o["name"]: o["price"] for o in outcomes}
+                all_matches.append({
+                    "Лига": league_title,
+                    "Мач": f"{home} vs {away}",
+                    "Начало": match_time,
+                    "Коеф. 1": odds_dict.get(home, ""),
+                    "Коеф. 2": odds_dict.get(away, "")
+                })
+            except Exception:
+                continue
 
-get_odds_for_football_leagues()
+    return pd.DataFrame(all_matches)
+
+# Бутон за зареждане
+if st.button("🔄 Зареди мачове"):
+    df = fetch_all_football_odds()
+    if not df.empty:
+        df["Начало"] = pd.to_datetime(df["Начало"])
+        df = df.sort_values("Начало")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("Няма активни мачове в момента.")
