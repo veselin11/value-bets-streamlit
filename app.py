@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 import requests
 from datetime import datetime, timedelta
-import pytz
 
 # ------------------- DB -------------------
 DB_PATH = "bets.db"
@@ -29,25 +28,26 @@ def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0):
 def get_bets():
     return pd.read_sql("SELECT * FROM bets", conn)
 
-# ------------------- API -------------------
-import toml
-secrets = toml.load(".streamlit/secrets.toml")
-ODDS_API_KEY = secrets["ODDS_API_KEY"]
+# ------------------- API Keys -------------------
+ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
 
-# Лиги за меню
+# Лиги (кодове за Football-Data API и Odds API трябва да съвпадат или да се коригират)
 LEAGUES = {
-    "Premier League": "soccer_epl",
-    "La Liga": "soccer_spain_la_liga",
-    "Bundesliga": "soccer_germany_bundesliga",
-    "Serie A": "soccer_italy_serie_a",
-    "Ligue 1": "soccer_france_ligue_one",
-    "Champions League": "soccer_uefa_champs_league"
+    "Premier League": ("PL", "soccer_epl"),
+    "La Liga": ("PD", "soccer_spain_la_liga"),
+    "Bundesliga": ("BL1", "soccer_germany_bundesliga"),
+    "Serie A": ("SA", "soccer_italy_serie_a"),
+    "Ligue 1": ("FL1", "soccer_france_ligue_one"),
+    "Champions League": ("CL", "soccer_uefa_champs_league")
 }
 
-# Връща коефициенти от ODDS API
+# ------------------- Функции -------------------
+
+# Вземаме коефициенти от Odds API
 @st.cache_data(ttl=3600)
-def get_odds_data(league="soccer_epl"):
-    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+def get_odds_data(league_code_odds):
+    url = f"https://api.the-odds-api.com/v4/sports/{league_code_odds}/odds"
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "eu",
@@ -60,29 +60,78 @@ def get_odds_data(league="soccer_epl"):
     else:
         return []
 
-@st.cache_data(ttl=86400)
-def get_all_soccer_leagues():
-    url = "https://api.the-odds-api.com/v4/sports"
-    res = requests.get(url, params={"apiKey": ODDS_API_KEY})
-    if res.status_code == 200:
-        sports = res.json()
-        return [s["key"] for s in sports if s["key"].startswith("soccer_") and s["active"]]
-    return []
+# Вземаме класирането от Football-Data API
+@st.cache_data(ttl=3600)
+def get_standings(league_code_fd):
+    url = f"https://api.football-data.org/v4/competitions/{league_code_fd}/standings"
+    headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        return None
+    data = res.json()
+    return data.get("standings", [])
 
+def get_team_stats(team_name, league_code_fd):
+    standings = get_standings(league_code_fd)
+    if not standings:
+        return None
+    for table in standings:
+        for team in table.get("table", []):
+            if team["team"]["name"].lower() == team_name.lower():
+                stats = team
+                played = stats["playedGames"]
+                won = stats["won"]
+                goal_diff = stats["goalDifference"]
+                win_rate = won / played if played > 0 else 0
+                return {
+                    "win_rate": win_rate,
+                    "goal_diff": goal_diff,
+                    "played": played,
+                    "position": stats["position"]
+                }
+    return None
+
+def estimate_probabilities_from_stats(home_team, away_team, league_code_fd):
+    home_stats = get_team_stats(home_team, league_code_fd)
+    away_stats = get_team_stats(away_team, league_code_fd)
+    if home_stats is None or away_stats is None:
+        return {"home": 0.33, "draw": 0.34, "away": 0.33}
+
+    home_strength = home_stats["win_rate"] + 0.01 * home_stats["goal_diff"]
+    away_strength = away_stats["win_rate"] + 0.01 * away_stats["goal_diff"]
+
+    total = home_strength + away_strength
+    if total == 0:
+        return {"home": 0.33, "draw": 0.34, "away": 0.33}
+
+    p_home = home_strength / total
+    p_away = away_strength / total
+    p_draw = 1 - (p_home + p_away)
+    p_draw = max(0, p_draw)
+
+    total_prob = p_home + p_draw + p_away
+    return {
+        "home": p_home / total_prob,
+        "draw": p_draw / total_prob,
+        "away": p_away / total_prob
+    }
+
+# Извличаме мачове за следващите дни от Odds API
 def get_upcoming_matches(days_ahead=3):
-    leagues = get_all_soccer_leagues()
     today = datetime.utcnow()
     end_date = today + timedelta(days=days_ahead)
     upcoming = []
 
-    for league in leagues:
-        matches = get_odds_data(league=league)
+    for league_name, (league_code_fd, league_code_odds) in LEAGUES.items():
+        matches = get_odds_data(league_code_odds)
         for game in matches:
             try:
                 game_time = datetime.fromisoformat(game["commence_time"].replace("Z", ""))
                 if today <= game_time <= end_date:
                     upcoming.append({
-                        "league": league,
+                        "league_fd": league_code_fd,
+                        "league_odds": league_code_odds,
+                        "league_name": league_name,
                         "match": f"{game['home_team']} vs {game['away_team']}",
                         "datetime": game_time,
                         "data": game
@@ -93,16 +142,16 @@ def get_upcoming_matches(days_ahead=3):
     return sorted(upcoming, key=lambda x: x["datetime"])
 
 # ------------------- UI -------------------
-st.title("⚽ Value Bets Tracker")
+st.title("⚽ Value Bets Tracker with Real Stats")
 
 # 1. Избор на лига
 league_name = st.selectbox("Избери лига", list(LEAGUES.keys()))
-league_code = LEAGUES[league_name]
+league_code_fd, league_code_odds = LEAGUES[league_name]
 
-# 2. Показване на коефициенти от избраната лига
+# 2. Коефициенти за избраната лига
 st.divider()
 st.subheader(f"📡 Коефициенти: {league_name}")
-odds_data = get_odds_data(league=league_code)
+odds_data = get_odds_data(league_code_odds)
 
 if odds_data:
     for game in odds_data[:5]:
@@ -116,57 +165,57 @@ if odds_data:
             st.markdown(f"**📌 Букмейкър:** {bookmaker['title']}")
             for market in bookmaker["markets"]:
                 if market["key"] == "h2h":
-                    outcomes = market["outcomes"]
-                    for o in outcomes:
+                    for o in market["outcomes"]:
                         st.write(f"{o['name']}: {o['price']:.2f}")
 else:
     st.info("Няма активни коефициенти за тази лига в момента.")
 
-# 3. Актуални мачове до 3 дни напред
+# 3. Мачове днес и следващите 3 дни с автоматично търсене на value bets
 st.divider()
-st.subheader("🗓️ Мачове за днес и следващите 3 дни")
-upcoming = get_upcoming_matches()
+st.subheader("🗓️ Мачове за днес и следващите 3 дни с автоматично търсене на Value Bets")
 
-if upcoming:
-    for item in upcoming:
-        match = item["match"]
-        date_str = item["datetime"].strftime("%Y-%m-%d %H:%M")
-        game = item["data"]
-        st.markdown(f"### {match} — 🕒 {date_str} ({item['league']})")
+upcoming = get_upcoming_matches(days_ahead=3)
+value_bets_found = []
 
-        for bookmaker in game["bookmakers"][:1]:
-            for market in bookmaker["markets"]:
-                if market["key"] == "h2h":
-                    outcomes = market["outcomes"]
-                    for o in outcomes:
-                        st.write(f"{o['name']}: {o['price']:.2f}")
+for item in upcoming:
+    match = item["match"]
+    league_fd = item["league_fd"]
+    league_odds = item["league_odds"]
+    home_team = item["data"]["home_team"]
+    away_team = item["data"]["away_team"]
 
-                    with st.expander("🎯 Провери и запиши Value Bet"):
-                        selected_team = st.selectbox("Отбор", [o["name"] for o in outcomes], key=game["id"])
-                        your_prob = st.number_input("Твоя вероятност (%)", min_value=1.0, max_value=100.0, step=0.1, key="prob_" + game["id"])
-                        stake = st.number_input("Заложена сума", min_value=0.1, step=0.1, value=10.0, key="stake_" + game["id"])
+    probs = estimate_probabilities_from_stats(home_team, away_team, league_fd)
 
-                        if st.button("Запиши Value Bet", key="btn_" + game["id"]):
-                            selected_odds = next((o["price"] for o in outcomes if o["name"] == selected_team), None)
-                            value = (your_prob / 100) * selected_odds - 1
-                            if value > 0:
-                                add_bet(
-                                    str(datetime.today().date()),
-                                    f"{match} ({selected_team})",
-                                    "1X2",
-                                    selected_odds,
-                                    stake,
-                                    status="open",
-                                    is_value_bet=1
-                                )
-                                st.success(f"✅ Записан е Value Bet със стойност {value * 100:.2f}%")
-                            else:
-                                st.warning(f"❌ Няма стойност. Value = {value * 100:.2f}%")
-else:
-    st.info("Няма мачове в следващите дни с налични коефициенти.")
+    h2h_odds = None
+    for bookmaker in item["data"]["bookmakers"][:1]:
+        for market in bookmaker["markets"]:
+            if market["key"] == "h2h":
+                h2h_odds = {o["name"]: o["price"] for o in market["outcomes"]}
 
-# 4. Таблица със залози
-st.divider()
-st.subheader("📋 Моите залози")
-bets_df = get_bets()
-st.dataframe(bets_df, use_container_width=True)
+    if not h2h_odds:
+        continue
+
+    for outcome_key, prob_key in zip(["home", "draw", "away"], ["home", "draw", "away"]):
+        team_name = home_team if outcome_key == "home" else (away_team if outcome_key == "away" else "Draw")
+        odd = h2h_odds.get(team_name)
+        if odd:
+            value = probs[prob_key] * odd - 1
+            if value > 0.05:  # праг 5%
+                bet_desc = f"{match} ({team_name})"
+                # Проверяваме дали вече сме записали този залог
+                existing = pd.read_sql("SELECT * FROM bets WHERE match = ? AND market = ? AND odds = ?", conn, params=(bet_desc, "1X2", odd))
+                if existing.empty:
+                    add_bet(
+                        str(datetime.today().date()),
+                        bet_desc,
+                        "1X2",
+                        odd,
+                        stake=10,
+                        status="open",
+                        is_value_bet=1
+                    )
+                value_bets_found.append({
+                    "Match": match,
+                    "Outcome": team_name,
+                    "Prob": f"{probs[prob_key]:.2f}",
+                    "Odds": odd,
