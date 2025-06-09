@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
-# --- Конфигурация ---
 API_KEY = st.secrets["ODDS_API_KEY"]
 
 LEAGUES = {
@@ -16,7 +15,6 @@ LEAGUES = {
     "Champions League": "soccer_uefa_champs_league"
 }
 
-# --- Функция за взимане на коефициенти ---
 @st.cache_data(ttl=300)
 def fetch_odds(league_code):
     url = f"https://api.the-odds-api.com/v4/sports/{league_code}/odds"
@@ -33,11 +31,17 @@ def fetch_odds(league_code):
         st.error(f"Грешка при зареждане на коефициенти за {league_code}")
         return []
 
-# --- Функция за филтриране на фаворити ---
-def filter_favorites(games, threshold=1.5):
+def filter_favorites_today(games, threshold=1.5):
     filtered = []
+    now = datetime.now(timezone.utc)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+
     for game in games:
         try:
+            commence = datetime.fromisoformat(game["commence_time"].replace("Z", "+00:00"))
+            if not (start_of_day <= commence <= end_of_day):
+                continue
             bookmakers = game.get("bookmakers", [])
             if not bookmakers:
                 continue
@@ -52,18 +56,18 @@ def filter_favorites(games, threshold=1.5):
                 filtered.append({
                     "league": game["sport_title"],
                     "match": f"{game['home_team']} vs {game['away_team']}",
-                    "commence_time": datetime.fromisoformat(game["commence_time"].replace("Z","")),
+                    "commence_time": commence,
                     "favorite_team": favorite["name"],
                     "initial_odd": favorite["price"],
                     "game_id": game["id"]
                 })
         except Exception:
             continue
+
     filtered.sort(key=lambda x: x["commence_time"])
     return filtered
 
-# --- Основен UI ---
-st.title("Live Фаворити и Коефициенти ⚽")
+st.title("Live Фаворити за Днес ⚽")
 
 # Sidebar настройки
 st.sidebar.header("Настройки на сигнала")
@@ -71,13 +75,11 @@ odd_increase_threshold = st.sidebar.slider("Минимално покачван�
 refresh_interval = st.sidebar.slider("Интервал за обновяване (сек.)", 30, 600, 300, 30)
 enable_sound = st.sidebar.checkbox("Включи звуков сигнал при промяна", value=False)
 
-# Избор на лига
 selected_league_name = st.sidebar.selectbox("Избери лига", list(LEAGUES.keys()))
 selected_league_code = LEAGUES[selected_league_name]
 
-# Зареждане на мачове
 all_games = fetch_odds(selected_league_code)
-favorites = filter_favorites(all_games, threshold=1.5)
+favorites = filter_favorites_today(all_games, threshold=1.5)
 
 if "prev_odds" not in st.session_state:
     st.session_state.prev_odds = {}
@@ -103,7 +105,6 @@ for fav in favorites:
     if current_odd and (current_odd - prev_odd) >= odd_increase_threshold:
         alerts.append(f"⚠️ Коефициент за {fav['favorite_team']} в мача {fav['match']} се покачи от {prev_odd:.2f} на {current_odd:.2f}!")
         if enable_sound:
-            # Вграден звуков сигнал с HTML5 (само при браузър)
             st.markdown("""
                 <audio autoplay>
                     <source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg">
