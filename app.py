@@ -1,7 +1,8 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
+import sqlite3
 from datetime import datetime
+import requests
 
 # ------------------- DB -------------------
 conn = sqlite3.connect("bets.db", check_same_thread=False)
@@ -45,9 +46,27 @@ def calculate_kpis(df):
     avg_profit = df["profit"].mean() if len(df) > 0 else 0
     return round(total_profit, 2), round(roi, 2), round(win_rate, 2), round(avg_profit, 2)
 
-# ------------------- UI -------------------
-st.title("📈 Тракер за спортни залози")
+# ------------------- ODDS API -------------------
+def get_odds_data(region="eu", market="h2h", league="soccer_epl"):
+    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+    params = {
+        "apiKey": st.secrets["ODDS_API_KEY"],
+        "regions": region,
+        "markets": market,
+        "oddsFormat": "decimal"
+    }
+    response = requests.get(url, params=params)
 
+    if response.status_code != 200:
+        st.error("Неуспешно извличане на коефициенти.")
+        return []
+
+    return response.json()
+
+# ------------------- UI -------------------
+st.title("⚽ Спортни залози: Тракер + Value Bet + Live коефициенти")
+
+# Добавяне на залог
 with st.form("add_bet"):
     st.subheader("➕ Добави нов залог")
     col1, col2 = st.columns(2)
@@ -65,9 +84,9 @@ with st.form("add_bet"):
         add_bet(str(date), match, market, odds, stake, status)
         st.success("✅ Залогът е запазен успешно!")
 
+# История и анализ
 st.divider()
 st.subheader("📋 История на залозите")
-
 bets_df = get_all_bets()
 
 if not bets_df.empty:
@@ -83,7 +102,7 @@ if not bets_df.empty:
 else:
     st.info("Все още няма въведени залози.")
 
-# ------------------- Value Bet Calculator -------------------
+# Value Bet калкулатор
 st.divider()
 st.subheader("🎯 Value Bet Калкулатор")
 
@@ -104,3 +123,39 @@ with st.form("value_bet_form"):
             st.success(f"✅ Има стойност! Value = {value_percent:.2f}%")
         else:
             st.error(f"❌ Няма стойност. Value = {value_percent:.2f}%")
+
+# Live коефициенти от ODDS API
+st.divider()
+st.subheader("📡 Футболни коефициенти (Premier League)")
+
+odds_data = get_odds_data(league="soccer_epl")
+
+if odds_data:
+    for game in odds_data[:5]:
+        home = game["home_team"]
+        away = game["away_team"]
+        commence = game["commence_time"].replace("T", " ").replace("Z", "")
+        st.markdown(f"### {home} vs {away} — 🕒 {commence}")
+
+        for bookmaker in game["bookmakers"][:1]:
+            st.markdown(f"**📌 Букмейкър:** {bookmaker['title']}")
+            for market in bookmaker["markets"]:
+                if market["key"] == "h2h":
+                    outcomes = market["outcomes"]
+                    for o in outcomes:
+                        team = o["name"]
+                        odds = o["price"]
+                        st.write(f"{team}: {odds:.2f}")
+
+            with st.expander("🎯 Провери стойност"):
+                selected_team = st.selectbox("Избери отбор", [o["name"] for o in market["outcomes"]], key=game["id"])
+                your_prob = st.number_input("Твоя вероятност (%)", min_value=1.0, max_value=100.0, step=0.1, key="vb_" + game["id"])
+                if st.button("Провери", key="btn_" + game["id"]):
+                    for o in market["outcomes"]:
+                        if o["name"] == selected_team:
+                            value = (your_prob / 100) * o["price"] - 1
+                            value_percent = value * 100
+                            if value > 0:
+                                st.success(f"✅ Value Bet: {value_percent:.2f}%")
+                            else:
+                                st.warning(f"❌ Няма стойност: {value_percent:.2f}%")
