@@ -4,168 +4,109 @@ import sqlite3
 import requests
 from datetime import datetime, timedelta
 import pytz
-import toml
+------------------- DB -------------------
 
-# ------------------- DB -------------------
-DB_PATH = "bets.db"
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS bets (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             date TEXT,
-             match TEXT,
-             market TEXT,
-             odds REAL,
-             stake REAL,
-             status TEXT,
-             is_value_bet INTEGER
-             )''')
-conn.commit()
+DB_PATH = "bets.db" conn = sqlite3.connect(DB_PATH, check_same_thread=False) c = conn.cursor() c.execute('''CREATE TABLE IF NOT EXISTS bets ( id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, match TEXT, market TEXT, odds REAL, stake REAL, status TEXT, is_value_bet INTEGER )''') conn.commit()
 
-def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0):
-    c.execute("INSERT INTO bets (date, match, market, odds, stake, status, is_value_bet) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              (date, match, market, odds, stake, status, is_value_bet))
-    conn.commit()
+def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0): c.execute("INSERT INTO bets (date, match, market, odds, stake, status, is_value_bet) VALUES (?, ?, ?, ?, ?, ?, ?)", (date, match, market, odds, stake, status, is_value_bet)) conn.commit()
 
-def get_bets():
-    return pd.read_sql("SELECT * FROM bets", conn)
+def get_bets(): return pd.read_sql("SELECT * FROM bets", conn)
 
-def update_bet_status(bet_id, new_status):
-    c.execute("UPDATE bets SET status = ? WHERE id = ?", (new_status, bet_id))
-    conn.commit()
+------------------- API -------------------
 
-def delete_bet(bet_id):
-    c.execute("DELETE FROM bets WHERE id = ?", (bet_id,))
-    conn.commit()
+import toml secrets = toml.load(".streamlit/secrets.toml") ODDS_API_KEY = secrets["ODDS_API_KEY"]
 
-# ------------------- API -------------------
-secrets = toml.load(".streamlit/secrets.toml")
-ODDS_API_KEY = secrets["ODDS_API_KEY"]
+Лиги
 
-LEAGUES = {
-    "Premier League": "soccer_epl",
-    "La Liga": "soccer_spain_la_liga",
-    "Bundesliga": "soccer_germany_bundesliga",
-    "Serie A": "soccer_italy_serie_a",
-    "Ligue 1": "soccer_france_ligue_one",
-    "Champions League": "soccer_uefa_champs_league"
-}
+LEAGUES = { "Premier League": "soccer_epl", "La Liga": "soccer_spain_la_liga", "Bundesliga": "soccer_germany_bundesliga", "Serie A": "soccer_italy_serie_a", "Ligue 1": "soccer_france_ligue_one", "Champions League": "soccer_uefa_champs_league" }
 
-@st.cache_data(ttl=3600)
-def get_odds_data(league="soccer_epl"):
-    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h",
-        "oddsFormat": "decimal"
-    }
-    res = requests.get(url, params=params)
-    if res.status_code == 200:
-        return res.json()
-    else:
-        st.error(f"Failed to fetch data: {res.status_code}")
-        return None
+Връща коефициенти от ODDS API
 
-# ------------------- Streamlit App -------------------
-st.title("📊 Betting Tracker")
+@st.cache_data(ttl=3600) def get_odds_data(league="soccer_epl"): url = f"https://api.the-odds-api.com/v4/sports/{league}/odds" params = { "apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal" } res = requests.get(url, params=params) if res.status_code == 200: return res.json() else: return []
 
-# ---------- Manual Bet Entry ----------
-with st.expander("➕ Add Bet Manually", expanded=True):
-    with st.form("manual_bet_form"):
-        date = st.date_input("Date", value=datetime.today())
-        match = st.text_input("Match")
-        market = st.selectbox("Market", ["Home Win", "Draw", "Away Win"])
-        odds = st.number_input("Odds", min_value=1.0, step=0.1, format="%.2f")
-        stake = st.number_input("Stake ($)", min_value=0.0, step=10.0, format="%.2f")
-        is_value_bet = st.checkbox("Value Bet?")
-        status = st.selectbox("Status", ["open", "won", "lost"])
-        
-        if st.form_submit_button("Add Bet"):
-            add_bet(
-                date=str(date),
-                match=match,
-                market=market,
-                odds=odds,
-                stake=stake,
-                status=status,
-                is_value_bet=int(is_value_bet)
-            )
-            st.success("Bet added successfully!")
+Мачове за следващите дни
 
-# ---------- Bet Management ----------
-st.subheader("📋 Current Bets")
-bets_df = get_bets()
+def get_upcoming_matches(days_ahead=3): all_leagues = list(LEAGUES.values()) today = datetime.utcnow() end_date = today + timedelta(days=days_ahead) upcoming = []
 
-if not bets_df.empty:
-    bets_df = bets_df.sort_values(by="date", ascending=False)
-    
-    # Convert to more readable format
-    bets_df['date'] = pd.to_datetime(bets_df['date']).dt.date
-    bets_df['is_value_bet'] = bets_df['is_value_bet'].astype(bool)
-    
-    # Status update and deletion
-    for _, row in bets_df.iterrows():
-        cols = st.columns([3, 2, 2, 1, 1])
-        cols[0].write(f"**{row['match']}**")
-        cols[1].write(f"{row['market']} @ {row['odds']}")
-        cols[2].write(f"${row['stake']}")
-        
-        # Status update
-        new_status = cols[3].selectbox(
-            "Status",
-            ["open", "won", "lost"],
-            index=["open", "won", "lost"].index(row['status']),
-            key=f"status_{row['id']}"
-        )
-        
-        if new_status != row['status']:
-            update_bet_status(row['id'], new_status)
-            st.experimental_rerun()
-        
-        # Delete button
-        if cols[4].button("❌", key=f"delete_{row['id']}"):
-            delete_bet(row['id'])
-            st.experimental_rerun()
-            
-        st.divider()
-else:
-    st.info("No bets recorded yet")
+for league in all_leagues:
+    matches = get_odds_data(league=league)
+    for game in matches:
+        try:
+            game_time = datetime.fromisoformat(game["commence_time"].replace("Z", ""))
+            if today <= game_time <= end_date:
+                upcoming.append({
+                    "league": league,
+                    "match": f"{game['home_team']} vs {game['away_team']}",
+                    "datetime": game_time,
+                    "data": game
+                })
+        except Exception:
+            continue
 
-# ---------- Odds API Section ----------
-st.subheader("🔍 Find Odds")
-selected_league = st.selectbox("Select League", list(LEAGUES.keys()))
-league_key = LEAGUES[selected_league]
+return sorted(upcoming, key=lambda x: x["datetime"])
 
-if st.button("Fetch Latest Odds"):
-    odds_data = get_odds_data(league_key)
-    
-    if odds_data:
-        for match in odds_data:
-            commence_time = datetime.strptime(match['commence_time'], "%Y-%m-%dT%H:%M:%SZ")
-            commence_date = commence_time.date()
-            
-            with st.expander(f"**{match['home_team']} vs {match['away_team']}** - {commence_date}"):
-                bookmaker_data = []
-                
-                for bookmaker in match['bookmakers']:
-                    for market in bookmaker['markets']:
-                        if market['key'] == 'h2h':
-                            outcomes = {o['name']: o['price'] for o in market['outcomes']}
-                            bookmaker_data.append({
-                                'bookmaker': bookmaker['title'],
-                                'home': outcomes.get(match['home_team'], 'N/A'),
-                                'draw': outcomes.get('Draw', 'N/A'),
-                                'away': outcomes.get(match['away_team'], 'N/A')
-                            })
-                
-                if bookmaker_data:
-                    df = pd.DataFrame(bookmaker_data)
-                    st.dataframe(df.style.highlight_min(axis=0, color='#FFCCCB'), 
-                                hide_index=True, 
-                                use_container_width=True)
-                else:
-                    st.warning("No odds available for this match")
+------------------- UI -------------------
 
-# Close connection on app exit
-conn.close()
+st.title("⚽ Value Bets Tracker")
+
+1. Избор на лига
+
+league_name = st.selectbox("Избери лига", list(LEAGUES.keys())) league_code = LEAGUES[league_name]
+
+2. Показване на коефициенти от избраната лига
+
+st.divider() st.subheader(f"📡 Коефициенти: {league_name}") odds_data = get_odds_data(league=league_code)
+
+if odds_data: for game in odds_data[:5]: home = game["home_team"] away = game["away_team"] commence = game["commence_time"].replace("T", " ").replace("Z", "") match_str = f"{home} vs {away}" st.markdown(f"### {match_str} — 🕒 {commence}")
+
+for bookmaker in game["bookmakers"][:1]:
+        st.markdown(f"**📌 Букмейкър:** {bookmaker['title']}")
+        for market in bookmaker["markets"]:
+            if market["key"] == "h2h":
+                outcomes = market["outcomes"]
+                for o in outcomes:
+                    st.write(f"{o['name']}: {o['price']:.2f}")
+
+else: st.info("Няма активни коефициенти за тази лига в момента.")
+
+3. Актуални мачове до 3 дни напред
+
+st.divider() st.subheader("🗓️ Мачове за днес и следващите 3 дни") upcoming = get_upcoming_matches()
+
+if upcoming: for item in upcoming: match = item["match"] date_str = item["datetime"].strftime("%Y-%m-%d %H:%M") game = item["data"] st.markdown(f"### {match} — 🕒 {date_str} ({item['league']})")
+
+for bookmaker in game["bookmakers"][:1]:
+        for market in bookmaker["markets"]:
+            if market["key"] == "h2h":
+                outcomes = market["outcomes"]
+                for o in outcomes:
+                    st.write(f"{o['name']}: {o['price']:.2f}")
+
+                with st.expander("🎯 Провери и запиши Value Bet"):
+                    selected_team = st.selectbox("Отбор", [o["name"] for o in outcomes], key=game["id"])
+                    your_prob = st.number_input("Твоя вероятност (%)", min_value=1.0, max_value=100.0, step=0.1, key="prob_" + game["id"])
+                    stake = st.number_input("Заложена сума", min_value=0.1, step=0.1, value=10.0, key="stake_" + game["id"])
+
+                    if st.button("Запиши Value Bet", key="btn_" + game["id"]):
+                        selected_odds = next((o["price"] for o in outcomes if o["name"] == selected_team), None)
+                        value = (your_prob / 100) * selected_odds - 1
+                        if value > 0:
+                            add_bet(
+                                str(datetime.today().date()),
+                                f"{match} ({selected_team})",
+                                "1X2",
+                                selected_odds,
+                                stake,
+                                status="open",
+                                is_value_bet=1
+                            )
+                            st.success(f"✅ Записан е Value Bet със стойност {value * 100:.2f}%")
+                        else:
+                            st.warning(f"❌ Няма стойност. Value = {value * 100:.2f}%")
+
+else: st.info("Няма мачове в следващите дни с налични коефициенти.")
+
+4. Таблица със залози
+
+st.divider() st.subheader("📋 Моите залози") bets_df = get_bets() st.dataframe(bets_df, use_container_width=True)
+
