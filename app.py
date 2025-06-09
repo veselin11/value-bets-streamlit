@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import toml
 import time
 
@@ -12,13 +12,14 @@ ODDS_API_KEY = secrets["ODDS_API_KEY"]
 st.set_page_config(layout="wide")
 st.title("📊 Следене на фаворити в реално време")
 
-FAVORITE_THRESHOLD = st.slider("Максимален коефициент за фаворит", min_value=1.1, max_value=2.0, value=1.5, step=0.05)
-ALERT_DIFF = st.slider("Сигнал при покачване на коеф. с поне:", min_value=0.1, max_value=1.0, value=0.3, step=0.05)
-REFRESH_INTERVAL = st.slider("Честота на проверка (сек)", min_value=60, max_value=600, value=180, step=30)
+FAVORITE_THRESHOLD = st.slider("Максимален коефициент за фаворит", 1.1, 2.0, 1.5, 0.05)
+ALERT_DIFF = st.slider("Сигнал при покачване на коеф. с поне:", 0.1, 1.0, 0.3, 0.05)
+REFRESH_INTERVAL = st.slider("Честота на проверка (сек)", 60, 600, 180, 30)
 
-# Състояние: стартови коефициенти
 if "initial_odds" not in st.session_state:
     st.session_state.initial_odds = {}
+if "last_update" not in st.session_state:
+    st.session_state.last_update = 0
 
 def fetch_favorite_matches():
     all_matches = []
@@ -27,9 +28,12 @@ def fetch_favorite_matches():
     sports_res = requests.get(sports_url, params={"apiKey": ODDS_API_KEY})
     if sports_res.status_code != 200:
         st.error("Грешка при зареждане на спортовете")
-        return []
+        return pd.DataFrame()
 
     football_leagues = [s for s in sports_res.json() if "soccer" in s["key"] and s["active"]]
+
+    now_utc = datetime.now(timezone.utc)
+    max_time = now_utc + timedelta(hours=24)
 
     for league in football_leagues:
         odds_url = f"https://api.the-odds-api.com/v4/sports/{league['key']}/odds"
@@ -46,7 +50,13 @@ def fetch_favorite_matches():
         for game in odds_res.json():
             try:
                 match_id = game["id"]
-                match_time = game["commence_time"].replace("T", " ").replace("Z", "")
+                # datetime с timezone info
+                match_time = datetime.fromisoformat(game["commence_time"].replace("Z", "+00:00"))
+
+                # Филтриране само за мачове в следващите 24 часа
+                if not (now_utc <= match_time <= max_time):
+                    continue
+
                 home = game["home_team"]
                 away = game["away_team"]
                 league_title = league["title"]
@@ -58,7 +68,6 @@ def fetch_favorite_matches():
                 if min_odds < FAVORITE_THRESHOLD:
                     favorite = [team for team, odds in odds_dict.items() if odds == min_odds][0]
 
-                    # Запазваме първоначалния коефициент
                     if match_id not in st.session_state.initial_odds:
                         st.session_state.initial_odds[match_id] = min_odds
 
@@ -69,7 +78,7 @@ def fetch_favorite_matches():
                     all_matches.append({
                         "Мач": f"{home} vs {away}",
                         "Лига": league_title,
-                        "Начало": match_time,
+                        "Начало": match_time.strftime("%Y-%m-%d %H:%M UTC"),
                         "Фаворит": favorite,
                         "Коеф. начален": round(initial_odds, 2),
                         "Коеф. текущ": round(current_odds, 2),
@@ -82,13 +91,26 @@ def fetch_favorite_matches():
 
     return pd.DataFrame(all_matches)
 
-if st.button("🔄 Обнови мачовете"):
-    with st.spinner("Зареждане..."):
-        df = fetch_favorite_matches()
-        if not df.empty:
-            df["Начало"] = pd.to_datetime(df["Начало"])
-            df = df.sort_values("Начало")
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.warning("Няма намерени мачове с фаворити при зададения праг.")
-            
+# Опция за ръчно обновяване
+refresh_clicked = st.button("🔄 Обнови мачовете")
+
+# Автоматично обновяване според интервала
+time_since_last = time.time() - st.session_state.last_update
+if refresh_clicked or time_since_last > REFRESH_INTERVAL:
+    st.session_state.last_update = time.time()
+    df = fetch_favorite_matches()
+    st.session_state.df = df
+else:
+    df = st.session_state.get("df", pd.DataFrame())
+
+if df.empty:
+    st.warning("Няма намерени мачове с фаворити при зададения праг и в следващите 24 часа.")
+else:
+    df_sorted = df.sort_values("Начало")
+    signals_count = df_sorted["Сигнал"].value_counts().get("🔔", 0)
+    st.markdown(f"### Общо сигнали: {signals_count}")
+    st.dataframe(df_sorted, use_container_width=True)
+
+# Автоматично презареждане
+if time.time() - st.session_state.last_update > REFRESH_INTERVAL:
+    st.experimental_rerun()
