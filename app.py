@@ -21,7 +21,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS bets (
 )''')
 conn.commit()
 
-# ------------------- DB функции -------------------
 def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0):
     c.execute("INSERT INTO bets (date, match, market, odds, stake, status, is_value_bet) VALUES (?, ?, ?, ?, ?, ?, ?)",
               (date, match, market, odds, stake, status, is_value_bet))
@@ -35,6 +34,7 @@ import toml
 secrets = toml.load(".streamlit/secrets.toml")
 ODDS_API_KEY = secrets["ODDS_API_KEY"]
 
+# Лиги за меню
 LEAGUES = {
     "Premier League": "soccer_epl",
     "La Liga": "soccer_spain_la_liga",
@@ -44,6 +44,7 @@ LEAGUES = {
     "Champions League": "soccer_uefa_champs_league"
 }
 
+# Връща коефициенти от ODDS API
 @st.cache_data(ttl=3600)
 def get_odds_data(league="soccer_epl"):
     url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
@@ -59,13 +60,22 @@ def get_odds_data(league="soccer_epl"):
     else:
         return []
 
+@st.cache_data(ttl=86400)
+def get_all_soccer_leagues():
+    url = "https://api.the-odds-api.com/v4/sports"
+    res = requests.get(url, params={"apiKey": ODDS_API_KEY})
+    if res.status_code == 200:
+        sports = res.json()
+        return [s["key"] for s in sports if s["key"].startswith("soccer_") and s["active"]]
+    return []
+
 def get_upcoming_matches(days_ahead=3):
-    all_leagues = list(LEAGUES.values())
+    leagues = get_all_soccer_leagues()
     today = datetime.utcnow()
     end_date = today + timedelta(days=days_ahead)
     upcoming = []
 
-    for league in all_leagues:
+    for league in leagues:
         matches = get_odds_data(league=league)
         for game in matches:
             try:
