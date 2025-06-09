@@ -1,84 +1,155 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 import requests
-from datetime import datetime, timezone
-import time
+from datetime import datetime, timedelta
+import pytz
+import toml
 
-API_KEY = st.secrets["ODDS_API_KEY"]
+# ------------------- DB -------------------
+DB_PATH = "bets.db"
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS bets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    match TEXT,
+    market TEXT,
+    odds REAL,
+    stake REAL,
+    status TEXT,
+    is_value_bet INTEGER
+)''')
+conn.commit()
+
+def add_bet(date, match, market, odds, stake, status="open", is_value_bet=0):
+    c.execute("INSERT INTO bets (date, match, market, odds, stake, status, is_value_bet) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (date, match, market, odds, stake, status, is_value_bet))
+    conn.commit()
+
+def get_bets():
+    return pd.read_sql("SELECT * FROM bets", conn)
+
+# ------------------- API -------------------
+secrets = toml.load(".streamlit/secrets.toml")
+ODDS_API_KEY = secrets["ODDS_API_KEY"]
 
 LEAGUES = {
     "Premier League": "soccer_epl",
     "La Liga": "soccer_spain_la_liga",
     "Bundesliga": "soccer_germany_bundesliga",
+    "Serie A": "soccer_italy_serie_a",
+    "Ligue 1": "soccer_france_ligue_one",
+    "Champions League": "soccer_uefa_champs_league"
 }
 
 @st.cache_data(ttl=300)
-def fetch_odds(league_code):
-    url = f"https://api.the-odds-api.com/v4/sports/{league_code}/odds"
-    r = requests.get(url, params={
-        "apiKey": API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"
-    })
-    return r.json() if r.status_code == 200 else []
+def get_odds_data(league="soccer_epl"):
+    url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",
+        "markets": "h2h",
+        "oddsFormat": "decimal"
+    }
+    res = requests.get(url, params=params)
+    if res.status_code == 200:
+        return res.json()
+    else:
+        return []
 
-def filter_favorites_today(games, threshold=1.5):
-    out = []
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-    for g in games:
-        ct = datetime.fromisoformat(g["commence_time"].replace("Z","+00:00"))
-        if not (today_start <= ct <= today_end):
-            continue
+# ------------------- UI -------------------
+st.title("⚽ Value Bets Tracker")
+
+# 1. Меню за избор на лига
+league_name = st.selectbox("Избери лига", list(LEAGUES.keys()))
+league_code = LEAGUES[league_name]
+
+# 2. Показване на коефициенти от избраната лига
+st.divider()
+st.subheader(f"📡 Коефициенти: {league_name}")
+odds_data = get_odds_data(league=league_code)
+
+if odds_data:
+    for game in odds_data[:5]:
+        home = game["home_team"]
+        away = game["away_team"]
+        commence = game["commence_time"].replace("T", " ").replace("Z", "")
+        match_str = f"{home} vs {away}"
+        st.markdown(f"### {match_str} — 🕒 {commence}")
+
+        for bookmaker in game["bookmakers"][:1]:
+            st.markdown(f"**📌 Букмейкър:** {bookmaker['title']}")
+            for market in bookmaker["markets"]:
+                if market["key"] == "h2h":
+                    outcomes = market["outcomes"]
+                    for o in outcomes:
+                        st.write(f"{o['name']}: {o['price']:.2f}")
+else:
+    st.info("Няма активни коефициенти за тази лига в момента.")
+
+# 3. Следене на фаворити на живо
+st.divider()
+st.subheader("🎯 Следене на фаворити с покачване на коефициент")
+
+FAVORITE_THRESHOLD = 1.50
+ALERT_INCREASE = 0.20
+
+all_fav_matches = []
+for league in LEAGUES.values():
+    matches = get_odds_data(league)
+    for game in matches:
         try:
-            h2h = next(m for m in g["bookmakers"][0]["markets"] if m["key"]=="h2h")
-            fav = min(h2h["outcomes"], key=lambda x: x["price"])
-            if fav["price"] <= threshold:
-                out.append({
-                    "game_id": g["id"], "commence": ct, "home": g["home_team"],
-                    "away": g["away_team"], "fav_name": fav["name"],
-                    "initial": fav["price"], "sport": g["sport_title"]
-                })
+            home = game["home_team"]
+            away = game["away_team"]
+            match_id = game["id"]
+            commence = datetime.fromisoformat(game["commence_time"].replace("Z", ""))
+            today = datetime.utcnow()
+            if commence.date() != today.date():
+                continue
+
+            for bookmaker in game["bookmakers"][:1]:
+                for market in bookmaker["markets"]:
+                    if market["key"] == "h2h":
+                        outcomes = market["outcomes"]
+                        odds = {o["name"]: o["price"] for o in outcomes}
+                        min_odd = min(odds.values())
+                        favorite = min(odds, key=odds.get)
+                        if min_odd <= FAVORITE_THRESHOLD:
+                            game_info = {
+                                "match": f"{home} vs {away}",
+                                "start_time": commence.strftime("%H:%M"),
+                                "favorite": favorite,
+                                "start_odd": min_odd,
+                                "current_odd": min_odd,
+                                "alert": False
+                            }
+
+                            if "last_odds" not in st.session_state:
+                                st.session_state.last_odds = {}
+
+                            prev_odd = st.session_state.last_odds.get(match_id, min_odd)
+                            st.session_state.last_odds[match_id] = min_odd
+
+                            if min_odd - prev_odd >= ALERT_INCREASE:
+                                game_info["alert"] = True
+
+                            all_fav_matches.append(game_info)
         except:
             continue
-    return sorted(out, key=lambda x: x["commence"])
 
-st.title("🎯 Днешни фаворити със сигнали")
-selected_league = st.sidebar.selectbox("Лига", list(LEAGUES.keys()))
-league_code = LEAGUES[selected_league]
-increase_thr = st.sidebar.slider("Праг (всяко покачване от)", 0.05, 1.0, 0.2, 0.05)
-refresh = st.sidebar.slider("Авто обновяване (сек)", 30, 600, 300, 30)
-sound = st.sidebar.checkbox("Звуков сигнал", False)
-
-games = fetch_odds(league_code)
-st.markdown("**Всички мачове от API:**")
-st.write(pd.DataFrame([{"home":g["home_team"], "away":g["away_team"], "time":g["commence_time"]} for g in games]))
-
-favs = filter_favorites_today(games)
-if not favs:
-    st.info("Няма днешни фаворити с начален коефициент ≤1.5")
+if all_fav_matches:
+    df = pd.DataFrame(all_fav_matches)
+    for _, row in df.iterrows():
+        alert_color = "red" if row.alert else "black"
+        st.markdown(f"<span style='color:{alert_color};font-size:18px'>⚽ {row['match']} ({row['start_time']}) — 📈 {row['favorite']} @ {row['current_odd']:.2f}</span>", unsafe_allow_html=True)
+        if row.alert:
+            st.warning(f"🚨 Повишен коефициент за фаворита {row['favorite']}!")
 else:
-    if "prev" not in st.session_state: st.session_state.prev = {}
-    alerts = []
-    data = []
-    for f in favs:
-        current = next((o["price"] for g in games if g["id"]==f["game_id"]
-                        for bk in g["bookmakers"][:1]
-                        for m in bk["markets"] if m["key"]=="h2h"
-                        for o in m["outcomes"] if o["name"]==f["fav_name"]
-                       ), None)
-        prev = st.session_state.prev.get(f["game_id"], f["initial"])
-        if current and (current - prev) >= increase_thr:
-            alerts.append(f"⚠️ {f['home']} vs {f['away']}: {f['fav_name']} от {prev:.2f} → {current:.2f}")
-            if sound:
-                st.audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg")
-        st.session_state.prev[f["game_id"]] = current
-        data.append({
-            "Лига": f["sport"], "Мач": f"{f['home']} vs {f['away']}",
-            "Начален": f["initial"], "Текущ": current
-        })
-    st.dataframe(pd.DataFrame(data))
-    for a in alerts: st.warning(a)
+    st.info("Няма мачове с фаворити или промени в коефициентите днес.")
 
-st.write(f"↻ Обновяване след {refresh} сек.")
-time.sleep(refresh)
-st.experimental_rerun()
+# 4. Таблица със залози
+st.divider()
+st.subheader("📋 Моите залози")
+bets_df = get_bets()
+st.dataframe(bets_df, use_container_width=True)
